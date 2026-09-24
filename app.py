@@ -1,86 +1,129 @@
-import base64, json, mimetypes, os, re
+import base64
+import json
+import random
+import re
 
-import gradio as gr
-from openai import OpenAI
+import requests
+import streamlit as st
 
-# Set these in the Space's "Variables and secrets" (never in the code)
-client = OpenAI(
-    api_key=os.environ.get("ZAI_API_KEY", ""),
-    base_url=os.environ.get("GLM_BASE_URL", "https://api.z.ai/api/paas/v4"),
-)
-MODEL = os.environ.get("GLM_MODEL", "glm-4.6v")  # must be a vision model
+st.set_page_config(page_title="Claims Severity Tester", page_icon="🚗", layout="wide")
 
-# Historical rule: high severity = replace
-DECISION = {"low": "Repair", "medium": "Repair", "high": "Replace"}
+# ---------- Config (all from Streamlit secrets; all optional) ----------
+API_KEY = st.secrets.get("ZAI_API_KEY", "")
+MODEL = st.secrets.get("GLM_MODEL", "glm-4.6v")
+BASE_URL = st.secrets.get("GLM_BASE_URL", "https://api.z.ai/api/paas/v4").rstrip("/")
+APP_PASS = st.secrets.get("APP_PASS", "")
+DEMO_MODE = not API_KEY
 
-PROMPT = """You are a vehicle damage assessor. Look at the car image(s) and reply with ONLY this JSON:
-{"severity": "low|medium|high", "confidence": 0.0-1.0, "damaged_parts": ["..."], "rationale": "one or two sentences"}"""
+# ---------- Optional password gate ----------
+if APP_PASS:
+    if "authed" not in st.session_state:
+        st.session_state.authed = False
+    if not st.session_state.authed:
+        pw = st.text_input("Password", type="password")
+        if st.button("Enter"):
+            if pw == APP_PASS:
+                st.session_state.authed = True
+                st.rerun()
+            else:
+                st.error("Wrong password")
+        st.stop()
+
+PROMPT = """You are a vehicle damage assessor. Look at the car image(s) and the claim report.
+Rate damage severity from 1 (cosmetic) to 10 (total structural damage), using the same
+standards as our historical claims where high severity meant the part was replaced and
+low severity meant it was repaired.
+
+Claim report:
+{report}
+
+Reply with ONLY JSON, no other text:
+{{"severity": <integer 1-10>, "damaged_parts": [<strings>], "reasoning": "<2-3 sentences>"}}"""
 
 
-def to_data_url(path):
-    mime = mimetypes.guess_type(path)[0] or "image/jpeg"
-    with open(path, "rb") as f:
-        return f"data:{mime};base64,{base64.b64encode(f.read()).decode()}"
+def read_report(uploaded, pasted):
+    text = pasted.strip()
+    if uploaded is not None:
+        name = uploaded.name.lower()
+        if name.endswith(".pdf"):
+            try:
+                from pypdf import PdfReader
+
+                reader = PdfReader(uploaded)
+                text += "\n" + "\n".join((p.extract_text() or "") for p in reader.pages)
+            except Exception as e:
+                st.warning(f"Could not read PDF: {e}")
+        else:
+            text += "\n" + uploaded.getvalue().decode("utf-8", errors="ignore")
+    return text.strip()
 
 
-def assess(images, report_text, report_file, recorded):
-    if not images:
-        raise gr.Error("Add at least one car image.")
-    text = (report_text or "").strip()
-    if not text and report_file and report_file.lower().endswith((".txt", ".json", ".csv")):
-        text = open(report_file, encoding="utf-8", errors="ignore").read()
-
-    content = [{"type": "text", "text": PROMPT}]
-    for p in images:
-        content.append({"type": "image_url", "image_url": {"url": to_data_url(p)}})
-
-    try:
-        res = client.chat.completions.create(
-            model=MODEL, messages=[{"role": "user", "content": content}], temperature=0
-        )
-    except Exception as e:
-        raise gr.Error(f"GLM request failed: {e}")
-
-    raw = res.choices[0].message.content or ""
-    match = re.search(r"\{.*\}", raw, re.S)
-    try:
-        data = json.loads(match.group(0))
-    except Exception:
-        raise gr.Error("Model did not return valid JSON:\n" + raw[:500])
-
-    sev = str(data.get("severity", "")).lower()
-    decision = DECISION.get(sev, "Unknown")
-    if recorded == "Not stated":
-        verdict = "No recorded outcome to compare."
-    else:
-        verdict = "Match" if decision == recorded else "Mismatch"
-
-    conf = data.get("confidence")
-    summary = (
-        f"## Model: {decision}\n"
-        f"**Severity:** {sev}"
-        + (f"  \n**Confidence:** {round(float(conf) * 100)}%" if conf is not None else "")
-        + f"  \n**Parts:** {', '.join(data.get('damaged_parts', [])) or 'none listed'}"
-        + f"  \n**Report says:** {recorded}"
-        + f"\n\n### {verdict}\n\n{data.get('rationale', '')}"
+def call_model(images, report):
+    content = [{"type": "text", "text": PROMPT.format(report=report or "(none provided)")}]
+    for img in images:
+        b64 = base64.b64encode(img.getvalue()).decode()
+        mime = img.type or "image/jpeg"
+        content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+    resp = requests.post(
+        f"{BASE_URL}/chat/completions",
+        headers={"Authorization": f"Bearer {API_KEY}"},
+        json={"model": MODEL, "messages": [{"role": "user", "content": content}], "temperature": 0.1},
+        timeout=120,
     )
-    return summary, text, data
+    resp.raise_for_status()
+    raw = resp.json()["choices"][0]["message"]["content"]
+    match = re.search(r"\{.*\}", raw, re.S)
+    return json.loads(match.group(0))
 
 
-with gr.Blocks(title="Claim severity tester") as demo:
-    gr.Markdown("# Claim severity tester\nCompare the GLM model's assessment of the car photos with what the claim report recorded.")
-    with gr.Row():
-        with gr.Column():
-            images = gr.File(label="Car images", file_count="multiple", file_types=["image"], type="filepath")
-            report_text = gr.Textbox(label="Claim report (paste text)", lines=6)
-            report_file = gr.File(label="Or attach report (.txt, .json, .csv)", type="filepath")
-            recorded = gr.Radio(["Not stated", "Repair", "Replace"], value="Not stated", label="Outcome recorded in the report")
-            run = gr.Button("Assess claim", variant="primary")
-        with gr.Column():
-            result = gr.Markdown()
-            shown_report = gr.Textbox(label="Report text used", lines=6, interactive=False)
-            raw = gr.JSON(label="Raw model output")
-    run.click(assess, [images, report_text, report_file, recorded], [result, shown_report, raw])
+def demo_result():
+    sev = random.randint(1, 10)
+    return {
+        "severity": sev,
+        "damaged_parts": ["front bumper", "bonnet"],
+        "reasoning": "DEMO MODE: placeholder output. Add your model API key in Secrets to get real predictions.",
+    }
 
-user, pw = os.environ.get("APP_USER"), os.environ.get("APP_PASS")
-demo.launch(auth=(user, pw) if user and pw else None)
+
+# ---------- UI ----------
+st.title("🚗 Claims Severity Tester")
+st.caption("Upload car images and the claim report. High severity = Replace, low = Repair.")
+
+if DEMO_MODE:
+    st.info("Demo mode: no model connected yet, so results are random placeholders.")
+
+threshold = st.sidebar.slider("Replace threshold (severity ≥)", 1, 10, 7)
+
+left, right = st.columns(2)
+with left:
+    images = st.file_uploader(
+        "Car images", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True
+    )
+    if images:
+        st.image([i.getvalue() for i in images], width=200)
+with right:
+    report_file = st.file_uploader("Claim report (PDF or TXT)", type=["pdf", "txt"])
+    report_text = st.text_area("...or paste the report text", height=150)
+
+if st.button("Assess claim", type="primary", disabled=not images):
+    report = read_report(report_file, report_text)
+    with st.spinner("Assessing..."):
+        try:
+            result = demo_result() if DEMO_MODE else call_model(images, report)
+        except Exception as e:
+            st.error(f"Model call failed: {e}")
+            st.stop()
+
+    sev = int(result.get("severity", 0))
+    decision = "REPLACE" if sev >= threshold else "REPAIR"
+    color = "#c62828" if decision == "REPLACE" else "#2e7d32"
+    st.markdown(
+        f"<div style='padding:16px;border-radius:10px;background:{color};color:white;"
+        f"font-size:28px;font-weight:700'>{decision} &nbsp;·&nbsp; severity {sev}/10</div>",
+        unsafe_allow_html=True,
+    )
+    st.progress(min(max(sev, 0), 10) / 10)
+    st.write("**Damaged parts:**", ", ".join(result.get("damaged_parts", [])) or "n/a")
+    st.write("**Reasoning:**", result.get("reasoning", ""))
+    with st.expander("Raw output"):
+        st.json(result)
