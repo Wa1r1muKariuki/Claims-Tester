@@ -1,19 +1,16 @@
-import base64
-import json
 import random
-import re
 
 import requests
 import streamlit as st
 
-st.set_page_config(page_title="Claims Severity Tester", page_icon="🚗", layout="wide")
+st.set_page_config(page_title="Claims Severity Tester", page_icon="🚗", layout="centered")
 
 # ---------- Config (all from Streamlit secrets; all optional) ----------
-API_KEY = st.secrets.get("ZAI_API_KEY", "")
-MODEL = st.secrets.get("GLM_MODEL", "glm-4.6v")
-BASE_URL = st.secrets.get("GLM_BASE_URL", "https://api.z.ai/api/paas/v4").rstrip("/")
+ENDPOINT_URL = st.secrets.get("ENDPOINT_URL", "")        # the backend that runs the VLLM
+ENDPOINT_KEY = st.secrets.get("ENDPOINT_KEY", "")        # sent as Bearer token, if they need one
+FILE_FIELD = st.secrets.get("FILE_FIELD", "file")        # multipart field name for the image
 APP_PASS = st.secrets.get("APP_PASS", "")
-DEMO_MODE = not API_KEY
+DEMO_MODE = not ENDPOINT_URL
 
 # ---------- Optional password gate ----------
 if APP_PASS:
@@ -29,101 +26,82 @@ if APP_PASS:
                 st.error("Wrong password")
         st.stop()
 
-PROMPT = """You are a vehicle damage assessor. Look at the car image(s) and the claim report.
-Rate damage severity from 1 (cosmetic) to 10 (total structural damage), using the same
-standards as our historical claims where high severity meant the part was replaced and
-low severity meant it was repaired.
-
-Claim report:
-{report}
-
-Reply with ONLY JSON, no other text:
-{{"severity": <integer 1-10>, "damaged_parts": [<strings>], "reasoning": "<2-3 sentences>"}}"""
+SCORE_KEYS = ("score", "severity", "severity_score")
+DECISION_KEYS = ("decision", "recommendation", "action", "verdict")
 
 
-def read_report(uploaded, pasted):
-    text = pasted.strip()
-    if uploaded is not None:
-        name = uploaded.name.lower()
-        if name.endswith(".pdf"):
-            try:
-                from pypdf import PdfReader
-
-                reader = PdfReader(uploaded)
-                text += "\n" + "\n".join((p.extract_text() or "") for p in reader.pages)
-            except Exception as e:
-                st.warning(f"Could not read PDF: {e}")
-        else:
-            text += "\n" + uploaded.getvalue().decode("utf-8", errors="ignore")
-    return text.strip()
+def find_key(data, keys):
+    """Look for the first matching key at the top level or one level down."""
+    if isinstance(data, dict):
+        for k in keys:
+            if k in data and data[k] is not None:
+                return data[k]
+        for v in data.values():
+            if isinstance(v, dict):
+                found = find_key(v, keys)
+                if found is not None:
+                    return found
+    return None
 
 
-def call_model(images, report):
-    content = [{"type": "text", "text": PROMPT.format(report=report or "(none provided)")}]
-    for img in images:
-        b64 = base64.b64encode(img.getvalue()).decode()
-        mime = img.type or "image/jpeg"
-        content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
-    resp = requests.post(
-        f"{BASE_URL}/chat/completions",
-        headers={"Authorization": f"Bearer {API_KEY}"},
-        json={"model": MODEL, "messages": [{"role": "user", "content": content}], "temperature": 0.1},
-        timeout=120,
-    )
+def call_endpoint(image):
+    headers = {"Authorization": f"Bearer {ENDPOINT_KEY}"} if ENDPOINT_KEY else {}
+    files = {FILE_FIELD: (image.name, image.getvalue(), image.type or "image/jpeg")}
+    resp = requests.post(ENDPOINT_URL, headers=headers, files=files, timeout=120)
     resp.raise_for_status()
-    raw = resp.json()["choices"][0]["message"]["content"]
-    match = re.search(r"\{.*\}", raw, re.S)
-    return json.loads(match.group(0))
-
-
-def demo_result():
-    sev = random.randint(1, 10)
-    return {
-        "severity": sev,
-        "damaged_parts": ["front bumper", "bonnet"],
-        "reasoning": "DEMO MODE: placeholder output. Add your model API key in Secrets to get real predictions.",
-    }
+    return resp.json()
 
 
 # ---------- UI ----------
 st.title("🚗 Claims Severity Tester")
-st.caption("Upload car images and the claim report. High severity = Replace, low = Repair.")
+st.caption("Upload a car image. The backend scores the damage; high severity = Replace, low = Repair.")
 
 if DEMO_MODE:
-    st.info("Demo mode: no model connected yet, so results are random placeholders.")
+    st.info("Demo mode: no backend connected yet, so results are random placeholders.")
 
-threshold = st.sidebar.slider("Replace threshold (severity ≥)", 1, 10, 7)
+# Scores in the historical data run from 0 (no damage) to about 100.
+threshold = st.sidebar.slider("Replace threshold (score ≥)", 1, 100, 60)
+st.sidebar.caption("Scores below this are Repair, at or above are Replace.")
 
-left, right = st.columns(2)
-with left:
-    images = st.file_uploader(
-        "Car images", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True
-    )
-    if images:
-        st.image([i.getvalue() for i in images], width=200)
-with right:
-    report_file = st.file_uploader("Claim report (PDF or TXT)", type=["pdf", "txt"])
-    report_text = st.text_area("...or paste the report text", height=150)
+image = st.file_uploader("Car image", type=["jpg", "jpeg", "png", "webp"])
+if image:
+    st.image(image.getvalue(), use_container_width=True)
 
-if st.button("Assess claim", type="primary", disabled=not images):
-    report = read_report(report_file, report_text)
+if st.button("Assess", type="primary", disabled=image is None):
     with st.spinner("Assessing..."):
         try:
-            result = demo_result() if DEMO_MODE else call_model(images, report)
+            result = {"score": round(random.choice([0, 0, random.uniform(5, 100)]), 1)} if DEMO_MODE else call_endpoint(image)
         except Exception as e:
-            st.error(f"Model call failed: {e}")
+            st.error(f"Backend call failed: {e}")
             st.stop()
 
-    sev = int(result.get("severity", 0))
-    decision = "REPLACE" if sev >= threshold else "REPAIR"
-    color = "#c62828" if decision == "REPLACE" else "#2e7d32"
-    st.markdown(
-        f"<div style='padding:16px;border-radius:10px;background:{color};color:white;"
-        f"font-size:28px;font-weight:700'>{decision} &nbsp;·&nbsp; severity {sev}/10</div>",
-        unsafe_allow_html=True,
-    )
-    st.progress(min(max(sev, 0), 10) / 10)
-    st.write("**Damaged parts:**", ", ".join(result.get("damaged_parts", [])) or "n/a")
-    st.write("**Reasoning:**", result.get("reasoning", ""))
-    with st.expander("Raw output"):
+    score = find_key(result, SCORE_KEYS)
+    decision_text = find_key(result, DECISION_KEYS)
+
+    if score is None and decision_text is None:
+        st.error("Couldn't find a score in the backend response. Check the raw output below.")
+    else:
+        if score is not None:
+            score = float(score)
+            if score <= 0:
+                label, color = "NO VISIBLE DAMAGE", "#546e7a"
+            elif score >= threshold:
+                label, color = "REPLACE", "#c62828"
+            else:
+                label, color = "REPAIR", "#2e7d32"
+            detail = f"score {score:g}"
+        else:
+            label = "REPLACE" if "replace" in str(decision_text).lower() else "REPAIR"
+            color = "#c62828" if label == "REPLACE" else "#2e7d32"
+            detail = "from backend"
+
+        st.markdown(
+            f"<div style='padding:16px;border-radius:10px;background:{color};color:white;"
+            f"font-size:28px;font-weight:700;text-align:center'>{label} &nbsp;·&nbsp; {detail}</div>",
+            unsafe_allow_html=True,
+        )
+        if score is not None:
+            st.progress(min(max(score, 0), 100) / 100)
+
+    with st.expander("Raw backend response"):
         st.json(result)
