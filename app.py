@@ -5,7 +5,7 @@ import html
 import os
 
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageOps
 
 import logic as L
 
@@ -133,8 +133,8 @@ hr{border-color:var(--border)!important;}
 .tbl td{padding:.7rem 1.2rem;border-top:1px solid var(--border);} .s-Matched{color:var(--ok);font-weight:600;} .s-NeedsReview{color:var(--warn);font-weight:600;} .s-Info,.s-ListedOnly{color:var(--accent);font-weight:600;}
 .tag{display:inline-block;background:var(--secondary);color:var(--accent);border-radius:99px;padding:.15rem .65rem;font-size:.78rem;font-weight:600;}
 .item{display:flex;background:var(--card2);border-radius:12px;padding:.6rem .8rem;font-size:.88rem;}
-@media(max-width:700px){.hero h1{font-size:2rem}.hero-in{padding-bottom:2.4rem}.stats{grid-template-columns:1fr}}
-</style>
+@media(max-width:700px){.hero h1{font-size:2rem}.hero-in{padding-bottom:2.4rem}.stats{grid-template-columns:1fr}
+.st-key-topstatus .pill{width:34px;padding:0;justify-content:center}.st-key-topstatus .ptxt{display:none}}</style>
 """
 ss = st.session_state
 ss.setdefault("dark", False)
@@ -263,8 +263,7 @@ stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><p
 <div class='txt'><h1>Car damage<br><em>Detection demo</em></h1></div></div></div>""",
             unsafe_allow_html=True)
 with st.container(key="topstatus"):
-    st.markdown("<div class='pill'><span class='dot'></span> Demo workspace</div>", unsafe_allow_html=True)
-with st.container(key="theme_toggle"):
+    st.markdown("<div class='pill'><span class='dot'></span><span class='ptxt'>Demo workspace</span></div>", unsafe_allow_html=True)with st.container(key="theme_toggle"):
     st.button("", icon=":material/light_mode:" if ss.dark else ":material/dark_mode:", key="theme_btn", on_click=toggle_theme,
               help="Switch to light mode" if ss.dark else "Switch to dark mode")
 
@@ -337,7 +336,7 @@ with right:
 
     elif ss.step == 1:
         head(2, "Garage report" if towed else "Document the damage",
-             "Attach the garage report. We read it and summarise the damage it describes." if towed else "Add any visible damage you notice on the vehicle.")
+             "Attach the garage report." if towed else "Add any visible damage you notice on the vehicle.")
         if towed:
             with st.container(key="card_report"):
                 st.markdown("**Garage report**  \n<span class='hint'>PDF, image or CSV · up to 15 MB</span>", unsafe_allow_html=True)
