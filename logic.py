@@ -33,10 +33,10 @@ PANELS = ["Front bumper", "Rear bumper", "Hood", "Trunk", "Roof", "Windshield",
 DAMAGES = ["Scratch", "Dent", "Smashed", "Broken", "Torn", "Dislodged"]
 DAMAGE_INFO = {
     "Scratch": "Surface marks or lines in the paint. The panel keeps its shape.",
-    "Dent": "Panel pushed inward with no break. Shape is distorted, paint mostly intact.",
-    "Smashed": "Heavily crushed or shattered, with cracks radiating from the impact.",
-    "Broken": "A part has snapped or split into pieces, or a piece is missing.",
-    "Torn": "Metal or plastic ripped open, leaving a jagged edge.",
+    "Dent": "Panel pushed inward with no break.",
+    "Smashed": "Cracked or shattered glass on the windscreen, side windows or rear screen.",
+    "Broken": "A headlight or taillight that has snapped, split into pieces or has a piece missing.",
+    "Torn": "A long scratch that has slightly ripped the surface, leaving a jagged edge.",
     "Dislodged": "Part is still attached but knocked out of position, with an uneven gap.",
 }
 ALIASES = {"smached": "Smashed", "smash": "Smashed", "scratches": "Scratch", "dented": "Dent",
