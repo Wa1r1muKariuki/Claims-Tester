@@ -1,5 +1,4 @@
 import base64
-import glob
 import hashlib
 import html
 import os
@@ -134,7 +133,8 @@ hr{border-color:var(--border)!important;}
 .tag{display:inline-block;background:var(--secondary);color:var(--accent);border-radius:99px;padding:.15rem .65rem;font-size:.78rem;font-weight:600;}
 .item{display:flex;background:var(--card2);border-radius:12px;padding:.6rem .8rem;font-size:.88rem;}
 @media(max-width:700px){.hero h1{font-size:2rem}.hero-in{padding-bottom:2.4rem}.stats{grid-template-columns:1fr}
-.st-key-topstatus .pill{width:34px;padding:0;justify-content:center}.st-key-topstatus .ptxt{display:none}}</style>
+.st-key-topstatus .pill{width:34px;padding:0;justify-content:center}.st-key-topstatus .ptxt{display:none}}
+</style>
 """
 ss = st.session_state
 ss.setdefault("dark", False)
@@ -157,14 +157,46 @@ def check(data):
     return L.check_single(data)
 
 
+EX_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "examples")
+
+
+def find_example(damage, variant):
+    """Case-insensitive lookup: dent_1.jpg / Dent_1.JPEG / dent_1.png ... (plain dent.jpg counts as image 1)."""
+    want = [f"{damage.lower()}_{variant + 1}"] + ([damage.lower()] if variant == 0 else [])
+    try:
+        files = sorted(os.listdir(EX_DIR))
+    except OSError:
+        return None
+    for w in want:
+        for f in files:
+            stem, ext = os.path.splitext(f)
+            if stem.lower() == w and ext.lower() in (".jpg", ".jpeg", ".png", ".webp"):
+                return os.path.join(EX_DIR, f)
+    return None
+
+
 @st.cache_data(show_spinner=False)
-def example(damage, variant=0):
-    pats = [f"{damage.lower()}_{variant + 1}.*"] + ([f"{damage.lower()}.*"] if variant == 0 else [])
-    for pat in pats:
-        for p in glob.glob(os.path.join("examples", pat)):
-            if not p.endswith(".txt"):
-                return Image.open(p).convert("RGB")
+def load_example(path, mtime):  # mtime in the key -> a replaced file is picked up without clearing the cache
+    try:
+        im = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
+        im.thumbnail((900, 900))
+        return im
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def drawn_example(damage, variant):
     return L.example_image(damage, variant)
+
+
+def example(damage, variant=0):
+    p = find_example(damage, variant)
+    if p:
+        im = load_example(p, os.path.getmtime(p))
+        if im is not None:
+            return im
+    return drawn_example(damage, variant)
 
 
 def photo_status():
@@ -260,10 +292,11 @@ st.markdown(f"""<div class='hero'>{img}<div class='shade'></div><div class='grid
 <div class='nav'><div class='brand'><div class='logo'><svg width='21' height='21' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2'
 stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><path d='m21 21-4.3-4.3'/><path d='m8 11 2 2 4-4'/></svg></div>
 <div><div class='bt'>CAR DAMAGE CHECK</div></div></div></div>
-<div class='txt'><h1>Car damage<br><em>Detection demo</em></h1></div></div></div>""",
+<div class='txt'><h1>Car damage<br><em>detection demo</em></h1></div></div></div>""",
             unsafe_allow_html=True)
 with st.container(key="topstatus"):
-    st.markdown("<div class='pill'><span class='dot'></span><span class='ptxt'>Demo workspace</span></div>", unsafe_allow_html=True)with st.container(key="theme_toggle"):
+    st.markdown("<div class='pill'><span class='dot'></span><span class='ptxt'>Demo workspace</span></div>", unsafe_allow_html=True)
+with st.container(key="theme_toggle"):
     st.button("", icon=":material/light_mode:" if ss.dark else ":material/dark_mode:", key="theme_btn", on_click=toggle_theme,
               help="Switch to light mode" if ss.dark else "Switch to dark mode")
 
@@ -336,7 +369,7 @@ with right:
 
     elif ss.step == 1:
         head(2, "Garage report" if towed else "Document the damage",
-             "Attach the garage report." if towed else "Add any visible damage you notice on the vehicle.")
+             "Attach the garage report. We read it and summarise the damage it describes." if towed else "Add any visible damage you notice on the vehicle.")
         if towed:
             with st.container(key="card_report"):
                 st.markdown("**Garage report**  \n<span class='hint'>PDF, image or CSV · up to 15 MB</span>", unsafe_allow_html=True)
