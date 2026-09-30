@@ -52,6 +52,10 @@ def test_journey2_and_switching_keeps_photos():
     assert len(at.session_state["photos"]) == 4
     at.session_state["report"] = {"name": "r.pdf", "error": None, "note": "ok"}
     at.session_state["garage"] = [("Hood", "Dent")]
+    at.session_state["step"] = 1; at.run()
+    html = " ".join(m.value for m in at.markdown)
+    assert "Garage report summary" in html and "Hood" in html      # read-only summary, no manual entry
+    assert not at.selectbox and not at.button(key="to2").disabled
     at.session_state["step"] = 2; at.run()
     at.button(key="run").click().run()
     assert not at.exception, at.exception
@@ -66,6 +70,24 @@ def test_duplicate_photo_blocked():
     at.run()
     assert "looks the same as your front photo" in " ".join(m.value for m in at.markdown)
     assert at.button(key="to1").disabled
+
+
+def test_theme_toggle_and_guide_images():
+    at = fresh()
+    assert at.session_state["dark"] is False
+    at.button(key="theme_btn").click().run()
+    assert at.session_state["dark"] is True and not at.exception
+    import logic as L
+    assert L.check_single(scene(3))["soft"] == []
+    for d in L.DAMAGES:
+        assert L.example_image(d, 0).size == L.example_image(d, 1).size
+
+
+def test_bad_quality_photos_are_rejected():
+    import io, logic as L
+    from PIL import Image
+    b = io.BytesIO(); Image.new("RGB", (1200, 800), (10, 10, 10)).save(b, "JPEG")
+    assert L.check_single(b.getvalue())["blocking"]
 
 
 if __name__ == "__main__":
