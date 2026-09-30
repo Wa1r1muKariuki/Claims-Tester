@@ -284,7 +284,7 @@ form_ready = (bool(rep) and not rep["error"]) if towed \
     else bool((items or ss.flags["none_minor"]) and ss.flags["confirmed"])
 sig = hashlib.md5(b"".join(ss.photos[v] for v in L.VIEWS if v in ss.photos)).hexdigest()
 dets_ok = ss.get("dets") is not None and ss.get("dets_sig") == sig
-stages = ["Photos", "Garage report" if towed else "Damage details", "Results"]
+stages = ["Garage report" if towed else "Damage details", "Photos", "Results"]
 
 # ---------------- hero ----------------
 img = f"<img src='{hero_uri()}' alt=''>" if hero_uri() else ""
@@ -305,8 +305,8 @@ left, right = st.columns([1, 3.6], gap="large")
 # ---------------- sidebar ----------------
 with left:
     st.markdown("<div class='side-h'>Your inspection</div>", unsafe_allow_html=True)
-    done = [photo_ready, form_ready and photo_ready, dets_ok]
-    icons = [":material/photo_camera:", ":material/description:", ":material/fact_check:"]
+    done = [form_ready, photo_ready, dets_ok]
+    icons = [":material/description:", ":material/photo_camera:", ":material/fact_check:"]
     for i, label in enumerate(stages):
         st.button(label, icon=":material/check_circle:" if done[i] else icons[i], key=f"{'navon' if ss.step == i else 'nav'}_{i}",
                   on_click=go, args=(i,))
@@ -320,55 +320,7 @@ with left:
 # ---------------- main ----------------
 with right:
     if ss.step == 0:
-        c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
-        with c1:
-            head(1, "Capture the vehicle", "Add one clear photo from each angle.")
-        if c2.button("Photo requirements", icon=":material/info:", key="req"):
-            requirements()
-        cols = st.columns(2)
-        for i, view in enumerate(L.VIEWS):
-            s, data = stat.get(view), ss.photos.get(view)
-            blocked = bool(s and s["blocking"])
-            ok = view in good
-            with cols[i % 2], st.container(key=f"card_photo_{view}"):
-                st.markdown(f"<div class='ph-head'><span class='badge'>0{i + 1}</span><div><b>{view} view</b><br>"
-                            f"<span class='hint'>{L.VIEW_HINT[view]}</span></div>{'<span class=tick>✓</span>' if ok else ''}</div>",
-                            unsafe_allow_html=True)
-                if data and s["hash"] is not None and not blocked:
-                    st.image(data)
-                else:
-                    st.markdown("<div class='ph-empty'><svg width='30' height='30' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' "
-                                "stroke-linecap='round' stroke-linejoin='round'><path d='M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z'/>"
-                                "<circle cx='12' cy='13' r='4'/></svg>"
-                                f"{'Photo needs replacing' if blocked else 'No photo added yet'}</div>", unsafe_allow_html=True)
-                if s and (blocked or s["soft"]):
-                    txt = html.escape(" ".join(s["blocking"] + s["soft"]))
-                    txt = txt[:1].upper() + txt[1:]
-                    st.markdown(f"<div class='note {'bad' if blocked else 'warn'}'>{txt}</div>", unsafe_allow_html=True)
-                    if not blocked:
-                        st.checkbox("Use anyway", value=ss.accepted.get(view, False), key=f"acc_{view}", on_change=_acc, args=(view,))
-                if ok:
-                    st.markdown(f"<div class='okline'>✓ Photo accepted · {s['size'][0]} × {s['size'][1]}</div>", unsafe_allow_html=True)
-                if data:
-                    st.button("Replace photo", icon=":material/refresh:", key=f"rep_{view}", on_click=drop_photo, args=(view,))
-                else:
-                    mode = st.segmented_control("Source", ["Upload", "Camera"], default="Upload",
-                                                key=f"mode_{view}", label_visibility="collapsed")
-                    n = ss.nonce[view]
-                    if mode == "Camera":
-                        f = st.camera_input(f"{view} photo", key=f"cam_{view}_{n}", label_visibility="collapsed")
-                    else:
-                        f = st.file_uploader(f"{view} photo", type=["jpg", "jpeg", "png", "webp"] + (["heic", "heif"] if L.HEIC else []),
-                                             key=f"up_{view}_{n}", label_visibility="collapsed")
-                    if f is not None:
-                        ss.counter += 1
-                        ss.photos[view], ss.seq[view], ss.accepted[view] = f.getvalue(), ss.counter, False
-                        ss.nonce[view] += 1
-                        st.rerun()
-        st.button(f"Continue to {stages[1].lower()}", icon=":material/arrow_forward:", icon_position="right", key="to1", type="primary", disabled=not photo_ready, on_click=go, args=(1,))
-
-    elif ss.step == 1:
-        head(2, "Garage report" if towed else "Document the damage",
+        head(1, "Garage report" if towed else "Document the damage",
              "Attach the garage report." if towed else "Add any visible damage you notice on the vehicle.")
         if towed:
             with st.container(key="card_report"):
@@ -425,22 +377,70 @@ with right:
                             disabled=bool(ss[key]), on_change=_flag, args=("none_minor",))
                 st.checkbox("I confirm this list is complete", value=ss.flags["confirmed"], key="cb_confirmed",
                             on_change=_flag, args=("confirmed",))
-        p1, p2 = st.columns(2)
-        p1.button("Photos", icon=":material/arrow_back:", key="back0", on_click=go, args=(0,))
-        p2.button("Review results", icon=":material/arrow_forward:", icon_position="right", key="to2", type="primary",
-                  disabled=not (form_ready and photo_ready), on_click=go, args=(2,))
-        if not photo_ready:
-            st.markdown("<div class='hint' style='color:var(--warn)'>Accept all four photos before continuing.</div>", unsafe_allow_html=True)
+        st.button("Continue to photos", icon=":material/arrow_forward:", icon_position="right", key="to1", type="primary",
+                  disabled=not form_ready, on_click=go, args=(1,))
+    elif ss.step == 1:
+        c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
+        with c1:
+            head(2, "Capture the vehicle", "Add one clear photo from each angle.")
+        if c2.button("Photo requirements", icon=":material/info:", key="req"):
+            requirements()
+        cols = st.columns(2)
+        for i, view in enumerate(L.VIEWS):
+            s, data = stat.get(view), ss.photos.get(view)
+            blocked = bool(s and s["blocking"])
+            ok = view in good
+            with cols[i % 2], st.container(key=f"card_photo_{view}"):
+                st.markdown(f"<div class='ph-head'><span class='badge'>0{i + 1}</span><div><b>{view} view</b><br>"
+                            f"<span class='hint'>{L.VIEW_HINT[view]}</span></div>{'<span class=tick>✓</span>' if ok else ''}</div>",
+                            unsafe_allow_html=True)
+                if data and s["hash"] is not None and not blocked:
+                    st.image(data)
+                else:
+                    st.markdown("<div class='ph-empty'><svg width='30' height='30' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' "
+                                "stroke-linecap='round' stroke-linejoin='round'><path d='M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z'/>"
+                                "<circle cx='12' cy='13' r='4'/></svg>"
+                                f"{'Photo needs replacing' if blocked else 'No photo added yet'}</div>", unsafe_allow_html=True)
+                if s and (blocked or s["soft"]):
+                    txt = html.escape(" ".join(s["blocking"] + s["soft"]))
+                    txt = txt[:1].upper() + txt[1:]
+                    st.markdown(f"<div class='note {'bad' if blocked else 'warn'}'>{txt}</div>", unsafe_allow_html=True)
+                    if not blocked:
+                        st.checkbox("Use anyway", value=ss.accepted.get(view, False), key=f"acc_{view}", on_change=_acc, args=(view,))
+                if ok:
+                    st.markdown(f"<div class='okline'>✓ Photo accepted · {s['size'][0]} × {s['size'][1]}</div>", unsafe_allow_html=True)
+                if data:
+                    st.button("Replace photo", icon=":material/refresh:", key=f"rep_{view}", on_click=drop_photo, args=(view,))
+                else:
+                    mode = st.segmented_control("Source", ["Upload", "Camera"], default="Upload",
+                                                key=f"mode_{view}", label_visibility="collapsed")
+                    n = ss.nonce[view]
+                    if mode == "Camera":
+                        f = st.camera_input(f"{view} photo", key=f"cam_{view}_{n}", label_visibility="collapsed")
+                    else:
+                        f = st.file_uploader(f"{view} photo", type=["jpg", "jpeg", "png", "webp"] + (["heic", "heif"] if L.HEIC else []),
+                                             key=f"up_{view}_{n}", label_visibility="collapsed")
+                    if f is not None:
+                        ss.counter += 1
+                        ss.photos[view], ss.seq[view], ss.accepted[view] = f.getvalue(), ss.counter, False
+                        ss.nonce[view] += 1
+                        st.rerun()
+        b1, b2 = st.columns(2)
+        b1.button(stages[0], icon=":material/arrow_back:", key="back0", on_click=go, args=(0,))
+        b2.button("Review results", icon=":material/arrow_forward:", icon_position="right", key="to2", type="primary",
+                  disabled=not (photo_ready and form_ready), on_click=go, args=(2,))
+        if not form_ready:
+            st.markdown("<div class='hint' style='color:var(--warn)'>Finish the " + stages[0].lower() + " step before reviewing results.</div>", unsafe_allow_html=True)
 
     else:
         head(3, "Inspection results", f"Compare {'the garage report' if towed else 'your notes'} against the photo findings.")
         if not (photo_ready and form_ready):
-            msg = f"Accept all four photos ({len(good)} of 4 ready)." if not photo_ready else (
-                "Upload a valid garage report." if towed
-                else "Add damage or select no visible damage, then confirm your list.")
+            target = 0 if not form_ready else 1
+            msg = ("Upload a valid garage report." if towed else "Add damage or select no visible damage, then confirm your list.") \
+                if not form_ready else f"Accept all four photos ({len(good)} of 4 ready)."
             with st.container(key="card_gate"):
                 st.markdown(f"**Complete your inspection first**  \n<span class='hint'>{msg}</span>", unsafe_allow_html=True)
-                st.button("Go to " + ("photos" if not photo_ready else stages[1]), key="gate", on_click=go, args=(0 if not photo_ready else 1,))
+                st.button("Go to " + stages[target].lower(), key="gate", on_click=go, args=(target,))
         else:
             with st.container(key="card_run"):
                 a, b = st.columns([4, 1.3], vertical_alignment="center")
