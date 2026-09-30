@@ -260,7 +260,7 @@ st.markdown(f"""<div class='hero'>{img}<div class='shade'></div><div class='grid
 <div class='nav'><div class='brand'><div class='logo'><svg width='21' height='21' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2'
 stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><path d='m21 21-4.3-4.3'/><path d='m8 11 2 2 4-4'/></svg></div>
 <div><div class='bt'>CAR DAMAGE CHECK</div></div></div></div>
-<div class='txt'><h1>Car damage<br><em>detection demo</em></h1></div></div></div>""",
+<div class='txt'><h1>Car damage<br><em>Detection demo</em></h1></div></div></div>""",
             unsafe_allow_html=True)
 with st.container(key="topstatus"):
     st.markdown("<div class='pill'><span class='dot'></span> Demo workspace</div>", unsafe_allow_html=True)
