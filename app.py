@@ -29,7 +29,8 @@ CSS = """
 :root{__VARS__ color-scheme:__SCHEME__;}
 html,body,.stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"]{background:var(--bg)!important;color:var(--fg);font-family:'DM Sans',sans-serif;}
 .stApp,[data-testid="stMain"]{overflow-x:hidden;}
-header[data-testid="stHeader"],#MainMenu,footer{display:none!important;}
+header[data-testid="stHeader"],[data-testid="stDecoration"],[data-testid="stToolbar"],#MainMenu,footer{display:none!important;}
+[data-testid="stElementContainer"]:has(style){position:absolute;height:0;width:0;overflow:hidden;margin:0;padding:0;}
 .block-container,[data-testid="stMainBlockContainer"],[data-testid="stAppViewBlockContainer"]{max-width:1240px;padding:0 1.5rem 4rem!important;margin-top:0!important;}
 [data-testid="stAppViewContainer"]>.main,[data-testid="stMain"],section.main{padding-top:0!important;}
 [data-testid="stMainBlockContainer"]>[data-testid="stVerticalBlock"]>[data-testid="stElementContainer"]:first-child{margin-top:0;}
@@ -46,7 +47,7 @@ hr{border-color:var(--border)!important;}
 .hero .grid{position:absolute;inset:0;z-index:-1;opacity:.18;background-image:linear-gradient(rgba(255,255,255,.25) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.25) 1px,transparent 1px);
  background-size:44px 44px;-webkit-mask-image:linear-gradient(180deg,#000,transparent 85%);mask-image:linear-gradient(180deg,#000,transparent 85%);}
 .hero:after{content:"";position:absolute;left:0;right:0;bottom:0;height:44px;background:linear-gradient(180deg,transparent,var(--bg));}
-.hero-in{max-width:1240px;margin:0 auto;padding:1rem 1.5rem 3rem;}
+.hero-in{max-width:1240px;margin:0 auto;padding:.9rem 1.5rem 2.6rem;}
 .nav{display:flex;align-items:center;min-height:38px;}
 .brand{display:flex;gap:.7rem;align-items:center;}
 .logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--p1),var(--p2));display:flex;align-items:center;justify-content:center;box-shadow:0 8px 20px -6px var(--glow);}
@@ -54,9 +55,9 @@ hr{border-color:var(--border)!important;}
 .pill{display:flex;gap:.45rem;align-items:center;font-size:.74rem;font-weight:600;color:#fff;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);
  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:.42rem .85rem;border-radius:99px;}
 .dot{width:8px;height:8px;border-radius:50%;background:#4ade80;box-shadow:0 0 0 4px rgba(74,222,128,.25);}
-.hero .txt{padding-top:1.6rem;max-width:660px;color:#fff;}
+.hero .txt{padding-top:.8rem;max-width:660px;color:#fff;}
 .kick{font-size:.7rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);}
-.hero h1{color:#fff!important;font-size:2.7rem;line-height:1.05;font-weight:800;margin:1rem 0 0;padding:0;letter-spacing:-.02em;}
+.hero h1{color:#fff!important;font-size:2.4rem;line-height:1.08;font-weight:800;margin:.4rem 0 0;padding:0;letter-spacing:-.02em;}
 .hero h1 em{font-style:normal;background:linear-gradient(90deg,#7ff5e9,#4aa8ff);-webkit-background-clip:text;background-clip:text;color:transparent;}
 .st-key-topstatus{position:fixed;top:.9rem;right:3.7rem;z-index:1000;width:auto!important;}
 .st-key-topstatus .pill{height:34px;padding:0 .85rem;background:rgba(13,27,34,.78);border:1px solid rgba(255,255,255,.25);box-shadow:0 6px 18px -8px rgba(0,0,0,.5);}
@@ -132,7 +133,7 @@ hr{border-color:var(--border)!important;}
 .tbl td{padding:.7rem 1.2rem;border-top:1px solid var(--border);} .s-Matched{color:var(--ok);font-weight:600;} .s-NeedsReview{color:var(--warn);font-weight:600;} .s-Info,.s-ListedOnly{color:var(--accent);font-weight:600;}
 .tag{display:inline-block;background:var(--secondary);color:var(--accent);border-radius:99px;padding:.15rem .65rem;font-size:.78rem;font-weight:600;}
 .item{display:flex;background:var(--card2);border-radius:12px;padding:.6rem .8rem;font-size:.88rem;}
-@media(max-width:700px){.hero h1{font-size:2.2rem}.hero-in{padding-bottom:3rem}.stats{grid-template-columns:1fr}}
+@media(max-width:700px){.hero h1{font-size:2rem}.hero-in{padding-bottom:2.4rem}.stats{grid-template-columns:1fr}}
 </style>
 """
 ss = st.session_state
@@ -259,7 +260,7 @@ st.markdown(f"""<div class='hero'>{img}<div class='shade'></div><div class='grid
 <div class='nav'><div class='brand'><div class='logo'><svg width='21' height='21' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2'
 stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><path d='m21 21-4.3-4.3'/><path d='m8 11 2 2 4-4'/></svg></div>
 <div><div class='bt'>CAR DAMAGE CHECK</div></div></div></div>
-<div class='txt'><h1>Car damage <em>detection demo</em></h1></div></div></div>""",
+<div class='txt'><h1>Car damage<br><em>detection demo</em></h1></div></div></div>""",
             unsafe_allow_html=True)
 with st.container(key="topstatus"):
     st.markdown("<div class='pill'><span class='dot'></span> Demo workspace</div>", unsafe_allow_html=True)
