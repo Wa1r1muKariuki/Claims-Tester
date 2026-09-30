@@ -30,41 +30,41 @@ CSS = """
 html,body,.stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"]{background:var(--bg)!important;color:var(--fg);font-family:'DM Sans',sans-serif;}
 .stApp,[data-testid="stMain"]{overflow-x:hidden;}
 header[data-testid="stHeader"],#MainMenu,footer{display:none!important;}
-.block-container{max-width:1240px;padding:0 1.5rem 4rem!important;}
+.block-container,[data-testid="stMainBlockContainer"],[data-testid="stAppViewBlockContainer"]{max-width:1240px;padding:0 1.5rem 4rem!important;margin-top:0!important;}
+[data-testid="stAppViewContainer"]>.main,[data-testid="stMain"],section.main{padding-top:0!important;}
+[data-testid="stMainBlockContainer"]>[data-testid="stVerticalBlock"]>[data-testid="stElementContainer"]:first-child{margin-top:0;}
 h1,h2,h3,.disp{font-family:'Manrope',sans-serif!important;color:var(--fg);}
 hr{border-color:var(--border)!important;}
 :where([data-testid="stWidgetLabel"] p,[data-testid="stCheckbox"] p,[data-testid="stCaptionContainer"],[data-testid="stMarkdownContainer"] p,[data-testid="stMarkdownContainer"] li){color:var(--fg);}
 :where([data-testid="stCaptionContainer"]){color:var(--mfg);}
 
 /* ---------- hero (full bleed) ---------- */
-.hero{position:relative;overflow:hidden;width:100vw;margin-left:calc(50% - 50vw);margin-bottom:2rem;min-height:400px;background:var(--ink);isolation:isolate;}
+.hero{position:relative;overflow:hidden;width:100vw;margin-left:calc(50% - 50vw);margin-bottom:1.6rem;min-height:210px;background:var(--ink);isolation:isolate;}
 .hero img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.55;z-index:-3;}
 .hero .shade{position:absolute;inset:0;z-index:-2;background:linear-gradient(90deg,var(--ink) 0%,rgba(13,27,34,.86) 42%,rgba(13,27,34,.15) 100%),
  radial-gradient(60% 90% at 85% 0%,rgba(20,179,168,.35),transparent 60%);}
 .hero .grid{position:absolute;inset:0;z-index:-1;opacity:.18;background-image:linear-gradient(rgba(255,255,255,.25) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.25) 1px,transparent 1px);
  background-size:44px 44px;-webkit-mask-image:linear-gradient(180deg,#000,transparent 85%);mask-image:linear-gradient(180deg,#000,transparent 85%);}
-.hero:after{content:"";position:absolute;left:0;right:0;bottom:0;height:70px;background:linear-gradient(180deg,transparent,var(--bg));}
-.hero-in{max-width:1240px;margin:0 auto;padding:1.1rem 1.5rem 4.2rem;}
-.nav{display:flex;justify-content:space-between;align-items:center;padding-right:4.2rem;}
+.hero:after{content:"";position:absolute;left:0;right:0;bottom:0;height:44px;background:linear-gradient(180deg,transparent,var(--bg));}
+.hero-in{max-width:1240px;margin:0 auto;padding:1rem 1.5rem 3rem;}
+.nav{display:flex;align-items:center;min-height:38px;}
 .brand{display:flex;gap:.7rem;align-items:center;}
 .logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--p1),var(--p2));display:flex;align-items:center;justify-content:center;box-shadow:0 8px 20px -6px var(--glow);}
-.bt{font-family:'Manrope';font-weight:800;font-size:.85rem;line-height:1.1;color:#fff;letter-spacing:.02em;} .bs{font-size:.66rem;color:rgba(255,255,255,.65);letter-spacing:.14em;}
+.bt{font-family:'Manrope';font-weight:800;font-size:.85rem;line-height:1.1;color:#fff;letter-spacing:.02em;}
 .pill{display:flex;gap:.45rem;align-items:center;font-size:.74rem;font-weight:600;color:#fff;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);
  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:.42rem .85rem;border-radius:99px;}
 .dot{width:8px;height:8px;border-radius:50%;background:#4ade80;box-shadow:0 0 0 4px rgba(74,222,128,.25);}
-.hero .txt{padding-top:3.2rem;max-width:660px;color:#fff;}
+.hero .txt{padding-top:1.6rem;max-width:660px;color:#fff;}
 .kick{font-size:.7rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);}
-.hero .kick{display:inline-block;color:#9df3ea!important;background:rgba(79,227,213,.14);border:1px solid rgba(79,227,213,.35);padding:.3rem .75rem;border-radius:99px;}
-.hero h1{color:#fff!important;font-size:3.1rem;line-height:1.05;font-weight:800;margin:1rem 0 0;padding:0;letter-spacing:-.02em;}
+.hero h1{color:#fff!important;font-size:2.7rem;line-height:1.05;font-weight:800;margin:1rem 0 0;padding:0;letter-spacing:-.02em;}
 .hero h1 em{font-style:normal;background:linear-gradient(90deg,#7ff5e9,#4aa8ff);-webkit-background-clip:text;background-clip:text;color:transparent;}
-.hero p{color:rgba(255,255,255,.82)!important;margin:1rem 0 0;max-width:470px;font-size:1.02rem;line-height:1.55;}
-.chips{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1.4rem;}
-.chips span{font-size:.75rem;font-weight:600;color:#fff;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);padding:.35rem .75rem;border-radius:99px;}
-.st-key-theme_toggle{position:fixed;top:1.1rem;right:1.5rem;z-index:1000;width:auto!important;}
-.st-key-theme_toggle button{width:44px!important;height:44px!important;min-height:44px!important;padding:0!important;border-radius:50%!important;color:#fff!important;
- background:rgba(255,255,255,.14)!important;border:1px solid rgba(255,255,255,.35)!important;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 6px 20px -6px rgba(0,0,0,.5)!important;}
-.st-key-theme_toggle button:hover{transform:rotate(18deg) scale(1.06)!important;background:rgba(255,255,255,.26)!important;}
-.st-key-theme_toggle button *{color:#fff!important;font-size:1.25rem;}
+.st-key-topstatus{position:fixed;top:.9rem;right:3.7rem;z-index:1000;width:auto!important;}
+.st-key-topstatus .pill{height:34px;padding:0 .85rem;background:rgba(13,27,34,.78);border:1px solid rgba(255,255,255,.25);box-shadow:0 6px 18px -8px rgba(0,0,0,.5);}
+.st-key-theme_toggle{position:fixed;top:.9rem;right:1.2rem;z-index:1000;width:auto!important;}
+.st-key-theme_toggle button{width:34px!important;height:34px!important;min-height:34px!important;padding:0!important;border-radius:50%!important;color:#fff!important;
+ background:rgba(13,27,34,.78)!important;border:1px solid rgba(255,255,255,.3)!important;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 6px 18px -8px rgba(0,0,0,.5)!important;}
+.st-key-theme_toggle button:hover{transform:rotate(18deg) scale(1.08)!important;background:rgba(13,27,34,.95)!important;color:#fff!important;}
+.st-key-theme_toggle button *{color:#fff!important;font-size:1.05rem;}
 
 /* ---------- typography + cards ---------- */
 .stitle{font-family:'Manrope';font-weight:800;font-size:1.9rem;margin:.3rem 0 0;letter-spacing:-.01em;} .sub{color:var(--mfg);font-size:.92rem;margin:.3rem 0 1.2rem;}
@@ -94,8 +94,12 @@ hr{border-color:var(--border)!important;}
 [class*="st-key-navon_"] button{background:var(--secondary)!important;color:var(--accent)!important;}
 [class*="st-key-navon_"] button *{color:var(--accent)!important;}
 [class*="_rm_"] button{color:var(--bad)!important;}
-[data-testid="stBaseButton-segmented_control"],[data-testid="stBaseButton-pills"]{background:var(--card2)!important;color:var(--fg)!important;border:1px solid var(--border)!important;border-radius:10px!important;}
-[data-testid="stBaseButton-segmented_controlActive"],[data-testid="stBaseButton-pillsActive"]{background:var(--secondary)!important;color:var(--accent)!important;border:1px solid var(--accent)!important;border-radius:10px!important;}
+[data-testid="stButtonGroup"] button,[data-testid="stSegmentedControl"] button,[data-testid^="stBaseButton-segmented"],[data-testid^="stBaseButton-pills"]{
+ background:var(--card2)!important;color:var(--fg)!important;border:1px solid var(--border)!important;border-radius:10px!important;}
+[data-testid="stButtonGroup"] button *,[data-testid="stSegmentedControl"] button *{color:inherit!important;}
+[data-testid="stButtonGroup"] button:hover{border-color:var(--accent)!important;}
+[data-testid="stButtonGroup"] button[data-testid$="Active"],[data-testid="stButtonGroup"] button[aria-checked="true"],[data-testid="stButtonGroup"] button[aria-pressed="true"],
+[data-testid$="Active"][data-testid^="stBaseButton-"]{background:var(--secondary)!important;color:var(--accent)!important;border:1px solid var(--accent)!important;font-weight:700;}
 
 /* ---------- inputs / dialogs (follow theme) ---------- */
 [data-baseweb="select"]>div{background:var(--card2)!important;border-color:var(--border)!important;border-radius:12px!important;color:var(--fg)!important;}
@@ -226,7 +230,7 @@ def guide(selected):
 @st.dialog("Photo requirements", width="small")
 def requirements():
     st.markdown("- JPG, PNG, WebP or HEIC, under 12 MB.\n"
-                "- Blurry, dark or overexposed photos: please don't upload them.\n"
+                "- Please don't upload blurry, dark or overexposed photos.\n"
                 "- Each angle needs a different photo.")
     st.caption("Image checks do not verify that a vehicle is pictured.")
 
@@ -254,12 +258,11 @@ img = f"<img src='{hero_uri()}' alt=''>" if hero_uri() else ""
 st.markdown(f"""<div class='hero'>{img}<div class='shade'></div><div class='grid'></div><div class='hero-in'>
 <div class='nav'><div class='brand'><div class='logo'><svg width='21' height='21' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2'
 stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><path d='m21 21-4.3-4.3'/><path d='m8 11 2 2 4-4'/></svg></div>
-<div><div class='bt'>CAR DAMAGE CHECK</div><div class='bs'>VEHICLE INSPECTION</div></div></div>
-<div class='pill'><span class='dot'></span> Demo workspace</div></div>
-<div class='txt'><div class='kick'>AI vehicle inspection</div><h1>Car damage<br><em>detection demo</em></h1>
-<p>Capture four angles, document the damage, and review your findings in one place.</p>
-<div class='chips'><span>4 guided angles</span><span>6 damage types</span><span>Instant comparison report</span></div></div></div></div>""",
+<div><div class='bt'>CAR DAMAGE CHECK</div></div></div></div>
+<div class='txt'><h1>Car damage <em>detection demo</em></h1></div></div></div>""",
             unsafe_allow_html=True)
+with st.container(key="topstatus"):
+    st.markdown("<div class='pill'><span class='dot'></span> Demo workspace</div>", unsafe_allow_html=True)
 with st.container(key="theme_toggle"):
     st.button("", icon=":material/light_mode:" if ss.dark else ":material/dark_mode:", key="theme_btn", on_click=toggle_theme,
               help="Switch to light mode" if ss.dark else "Switch to dark mode")
@@ -274,7 +277,7 @@ with left:
     for i, label in enumerate(stages):
         st.button(label, icon=":material/check_circle:" if done[i] else icons[i], key=f"{'navon' if ss.step == i else 'nav'}_{i}",
                   on_click=go, args=(i,))
-    st.markdown(f"<div class='prog'><span>Photo progress</span><span style='color:var(--primary)'>{len(good)} of 4</span></div>"
+    st.markdown(f"<div class='prog'><span>Photo progress</span><span style='color:var(--accent)'>{len(good)} of 4</span></div>"
                 f"<div class='bar'><i style='width:{len(good) * 25}%'></i></div>"
                 "<div class='hint'>Each angle is checked before it can be used.</div>", unsafe_allow_html=True)
     st.markdown("<div class='prog'><span>INSPECTION TYPE</span></div>", unsafe_allow_html=True)
