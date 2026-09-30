@@ -92,12 +92,23 @@ def check_single(data: bytes, min_short=480, min_long=640):
     else:
         lap = -4 * g[1:-1, 1:-1] + g[:-2, 1:-1] + g[2:, 1:-1] + g[1:-1, :-2] + g[1:-1, 2:]
         if lap.var() < 40:
-            soft.append("blurry, hold steady and retake")
+            blocking.append("Photo is blurry. Please don't upload it; hold steady and retake.")
         if mean < 50:
-            soft.append("too dark")
+            blocking.append("Photo is too dark. Please don't upload it; retake in better light.")
         elif mean > 215:
-            soft.append("overexposed")
+            blocking.append("Photo is overexposed. Please don't upload it; retake away from glare.")
     return {"blocking": blocking, "soft": soft, "hash": ahash(im), "size": (w, h)}
+
+
+def extract_report_items(data: bytes):
+    """MOCK report reader (deterministic per file) until a real OCR/LLM extractor is connected."""
+    rng = random.Random(hashlib.md5(data).hexdigest())
+    items = []
+    for _ in range(rng.randint(0, 3)):
+        it = (rng.choice(PANELS), rng.choice(DAMAGES))
+        if it not in items:
+            items.append(it)
+    return items
 
 
 def validate_report(name: str, data: bytes):
@@ -107,8 +118,8 @@ def validate_report(name: str, data: bytes):
         return {"error": "file is larger than 15 MB", "items": [], "note": ""}
     if name.endswith(".pdf"):
         ok = data[:5] == b"%PDF-"
-        return {"error": None if ok else "not a valid PDF file", "items": [],
-                "note": "PDF attached. Enter its damage items below."}
+        return {"error": None if ok else "not a valid PDF file", "items": extract_report_items(data) if ok else [],
+                "note": "PDF read."}
     if name.endswith(".csv"):
         try:
             df = pd.read_csv(io.BytesIO(data))
@@ -129,7 +140,7 @@ def validate_report(name: str, data: bytes):
         return {"error": None, "items": items, "note": f"{len(items)} item(s) loaded from CSV."}
     try:
         Image.open(io.BytesIO(data)).verify()
-        return {"error": None, "items": [], "note": "Image attached. Enter its damage items below."}
+        return {"error": None, "items": extract_report_items(data), "note": "Image read."}
     except Exception:
         return {"error": "not a readable image", "items": [], "note": ""}
 
@@ -197,47 +208,56 @@ def outcome(df):
 
 
 # ---------------- illustrated examples ----------------
-def example_image(damage, size=(640, 420)):
-    """Simple illustration. Drop real photos in examples/<damage>.jpg to override (see app)."""
+BODY = [((52, 101, 164), (28, 58, 100), (78, 130, 192)),   # variant 0: blue
+        ((156, 44, 52), (92, 22, 30), (196, 84, 90))]      # variant 1: red
+
+
+def example_image(damage, variant=0, size=(480, 320)):
+    """Simple illustration (two variants per damage). Real photos in examples/ override it (see app)."""
     W, H = size
+    base, edge, top = BODY[variant % 2]
     img = Image.new("RGB", size, (232, 236, 242))
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle((24, 24, W - 24, H - 24), radius=34, fill=(52, 101, 164), outline=(28, 58, 100), width=5)
-    d.rounded_rectangle((44, 40, W - 44, H // 3), radius=24, fill=(78, 130, 192))
-    rnd = random.Random(damage)
-    cx, cy = W // 2, H // 2 + 20
+    d.rounded_rectangle((18, 18, W - 18, H - 18), radius=26, fill=base, outline=edge, width=4)
+    d.rounded_rectangle((34, 30, W - 34, H // 3), radius=18, fill=top)
+    rnd = random.Random(f"{damage}{variant}")
+    dx = -70 if variant else 0                     # variant 1 puts the damage elsewhere on the panel
+    cx, cy = W // 2 + dx, H // 2 + 16
+    lite = tuple(min(255, c + 60) for c in base)
     if damage == "Scratch":
-        for i in range(6):
-            x = 130 + i * 18
-            d.line([(x, 110 + rnd.randint(-5, 5)), (x + 230, H - 110 + rnd.randint(-8, 8))], fill=(238, 241, 245), width=2)
+        for i in range(6 if variant == 0 else 3):
+            x = cx - 100 + i * 16
+            d.line([(x, cy - 80 + rnd.randint(-5, 5)), (x + 170 + variant * 40, cy + 70 + rnd.randint(-8, 8))],
+                   fill=(238, 241, 245), width=2)
     elif damage == "Dent":
-        for i, r in enumerate(range(110, 10, -10)):
-            c = (int(52 - i * 2.2), int(101 - i * 4), int(164 - i * 6))
+        for i, r in enumerate(range(80 - variant * 20, 8, -8)):
+            c = tuple(max(0, int(v - i * k)) for v, k in zip(base, (2.2, 4, 6)))
             d.ellipse((cx - r * 1.5, cy - r, cx + r * 1.5, cy + r), fill=c)
-        d.ellipse((cx - 80, cy - 60, cx - 20, cy - 25), fill=(130, 175, 220))
+        d.ellipse((cx - 60, cy - 44, cx - 15, cy - 18), fill=lite)
     elif damage == "Smashed":
-        d.polygon([(cx - 30, cy - 20), (cx + 25, cy - 35), (cx + 45, cy + 15), (cx, cy + 40), (cx - 40, cy + 20)], fill=(18, 22, 30))
-        for a in range(14):
-            ang = a * 0.4488
-            r = rnd.randint(90, 170)
+        d.polygon([(cx - 22, cy - 15), (cx + 18, cy - 26), (cx + 34, cy + 11), (cx, cy + 30), (cx - 30, cy + 15)], fill=(18, 22, 30))
+        for a in range(14 if variant == 0 else 9):
+            ang = a * (0.4488 if variant == 0 else 0.698)
+            r = rnd.randint(70, 130)
             d.line([(cx, cy), (cx + r * np.cos(ang), cy + r * np.sin(ang) * 0.7)], fill=(235, 238, 243), width=2)
-        for r in (60, 100):
+        for r in (45, 78):
             d.ellipse((cx - r, cy - r * 0.7, cx + r, cy + r * 0.7), outline=(220, 225, 232), width=2)
     elif damage == "Broken":
-        pts = [(cx - 20, 24)]
+        pts = [(cx - 15, 18)]
         for i in range(1, 9):
-            pts.append((cx + (25 if i % 2 else -25) + rnd.randint(-8, 8), 24 + i * (H - 48) // 8))
-        d.polygon(pts + [(cx + 60, H - 24), (cx + 60, 24)], fill=(18, 22, 30))
+            pts.append((cx + (20 if i % 2 else -20) + rnd.randint(-6, 6), 18 + i * (H - 36) // 8))
+        d.polygon(pts + [(cx + 46, H - 18), (cx + 46, 18)], fill=(18, 22, 30))
         d.line(pts, fill=(235, 238, 243), width=3)
     elif damage == "Torn":
-        pts = [(W - 24, cy - 60)]
+        x0 = W - 18 if variant == 0 else W - 130
+        pts = [(x0, cy - 45)]
         for i in range(1, 12):
-            pts.append((W - 24 - (150 if i % 2 else 70) - rnd.randint(0, 25), cy - 60 + i * 11))
-        pts.append((W - 24, cy + 70))
+            pts.append((x0 - (110 if i % 2 else 52) - rnd.randint(0, 18), cy - 45 + i * 8))
+        pts.append((x0, cy + 50))
         d.polygon(pts, fill=(150, 156, 165))
-        d.polygon([(x + 12, y) for x, y in pts[:-1]] + [(W - 24, cy + 70)], outline=(20, 20, 24), width=3)
+        d.line(pts, fill=(20, 20, 24), width=3)
     elif damage == "Dislodged":
-        d.rectangle((90, 90, W - 90, H // 2 + 10), fill=(15, 18, 24))
-        d.rectangle((104, 116, W - 76, H // 2 + 40), fill=(96, 148, 210), outline=(28, 58, 100), width=4)
-    d.text((34, H - 22), f"Illustration: {damage}", fill=(255, 255, 255))
+        d.rectangle((70 + dx // 2, 70, W - 70 + dx // 2, H // 2 + 8), fill=(15, 18, 24))
+        d.rectangle((80 + dx // 2, 90 + variant * 8, W - 55 + dx // 2, H // 2 + 30), fill=lite, outline=edge, width=3)
+    d.text((26, H - 20), f"Illustration: {damage} ({variant + 1}/2)", fill=(255, 255, 255))
     return img
