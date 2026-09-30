@@ -369,7 +369,7 @@ with right:
 
     elif ss.step == 1:
         head(2, "Garage report" if towed else "Document the damage",
-             "Attach the garage report. We read it and summarise the damage it describes." if towed else "Add any visible damage you notice on the vehicle.")
+             "Attach the garage report." if towed else "Add any visible damage you notice on the vehicle.")
         if towed:
             with st.container(key="card_report"):
                 st.markdown("**Garage report**  \n<span class='hint'>PDF, image or CSV · up to 15 MB</span>", unsafe_allow_html=True)
