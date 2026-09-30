@@ -4,6 +4,7 @@ Real model API contract (set MODEL_API_URL): POST multipart field "image",
 respond with JSON list of {"Panel", "Damage", "conf", "bbox": [x1, y1, x2, y2]}
 (bbox as fractions 0-1 of image width/height).
 """
+import base64
 import hashlib
 import io
 import os
@@ -39,7 +40,7 @@ DAMAGE_INFO = {
     "Torn": "A long scratch that has slightly ripped the surface, leaving a jagged edge.",
     "Dislodged": "Part is still attached but knocked out of position, with an uneven gap.",
 }
-ALIASES = {"smached": "Smashed", "smash": "Smashed", "scratches": "Scratch", "dented": "Dent",
+ALIASES = {"smashed glass": "Smashed", "broken lamp": "Broken", "smached": "Smashed", "smash": "Smashed", "scratches": "Scratch", "dented": "Dent",
            "rip": "Torn", "ripped": "Torn", "displaced": "Dislodged"}
 
 
@@ -111,7 +112,7 @@ def extract_report_items(data: bytes):
     return items
 
 
-def validate_report(name: str, data: bytes):
+def _validate_report(name: str, data: bytes):
     """Validate an uploaded garage report. Returns {error, items, note}."""
     name = name.lower()
     if len(data) > 15 * 1024 * 1024:
@@ -261,3 +262,71 @@ def example_image(damage, variant=0, size=(480, 320)):
         d.rectangle((80 + dx // 2, 90 + variant * 8, W - 55 + dx // 2, H // 2 + 30), fill=lite, outline=edge, width=3)
     d.text((26, H - 20), f"Illustration: {damage} ({variant + 1}/2)", fill=(255, 255, 255))
     return img
+
+
+def report_text(name: str, data: bytes):
+    """Plain text of a report, sent to the backend as garage_text (PDF text layer, CSV/TXT content)."""
+    n = name.lower()
+    try:
+        if n.endswith(".pdf"):
+            from pypdf import PdfReader
+            return "\n".join((p.extract_text() or "") for p in PdfReader(io.BytesIO(data)).pages[:20]).strip()[:20000]
+        if n.endswith((".csv", ".txt")):
+            return data.decode("utf-8", "ignore")[:20000]
+    except Exception:
+        pass
+    return ""
+
+
+def validate_report(name: str, data: bytes):
+    """Validate an uploaded garage report. Returns {error, items, note, text}."""
+    if name.lower().endswith(".txt"):
+        text = data.decode("utf-8", "ignore").strip()
+        out = {"error": None if text else "text file is empty", "items": extract_report_items(data) if text else [],
+               "note": "Text read."}
+    else:
+        out = _validate_report(name, data)
+    out["text"] = "" if out["error"] else report_text(name, data)
+    return out
+
+
+# ---------------- demo-mode stand-ins for the minor journey (used when no backend is connected) ----------------
+def mock_minor_check(damage_type, data, threshold=None):
+    """Shaped like the backend's /journeys/minor/check response. Deterministic per photo."""
+    rng = random.Random(hashlib.md5(damage_type.encode() + data).hexdigest())
+    thr = 0.5 if threshold is None else float(threshold)
+    conf = round(rng.uniform(0.25, 0.96), 2)
+    others = [d for d in DAMAGES if d != damage_type and rng.random() < 0.12][:1]
+    sev = round(rng.uniform(15, 90))
+    img = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
+    W, H = img.size
+    x, y = rng.uniform(0.15, 0.5), rng.uniform(0.15, 0.5)
+    box = [x * W, y * H, (x + 0.3) * W, (y + 0.3) * H]
+    d = ImageDraw.Draw(img)
+    d.rectangle(box, outline=(239, 68, 68), width=max(3, W // 250))
+    d.text((box[0] + 4, box[1] + 4), f"{damage_type} {conf:.0%}", fill=(239, 68, 68))
+    img.thumbnail((900, 900))
+    b = io.BytesIO()
+    img.save(b, "JPEG", quality=80)
+    return {"damage_type": damage_type, "label": damage_type, "confirmed": conf >= thr, "available": True, "error": None,
+            "max_conf": conf, "thr": thr, "other_damage": others, "quality": {},
+            "severity": {"ok": True, "configured": False, "composite": sev}, "fix_type": "replace" if sev > 70 else "repair",
+            "image_jpeg_b64": base64.b64encode(b.getvalue()).decode()}
+
+
+def mock_minor_finalize(items):
+    """Shaped like /journeys/minor/finalize. part_ids are 1-based indexes into PANELS in demo mode."""
+    rows = []
+    for it in items:
+        rows.append({"damage_type": it["damage_type"], "damage": it["damage_type"].title(), "confirmed": it["confirmed"],
+                     "max_conf": it["max_conf"], "severity": it["severity"], "severity_source": it["severity_source"],
+                     "fix_type": "replace" if it["severity"] > 70 else "repair", "part_ids": it["part_ids"],
+                     "part_names": [PANELS[i - 1] for i in it["part_ids"] if 0 < i <= len(PANELS)],
+                     "status": "matched" if it["confirmed"] else "needs_review",
+                     "reason": "The detector confirmed it." if it["confirmed"] else "The detector did not confirm it. A person should review it."})
+    n = sum(r["status"] != "matched" for r in rows)
+    return {"outcome": "needs_review" if n else "matched",
+            "summary": f"{n} of {len(rows)} declared damage type(s) need review." if n else "Every declared damage type was confirmed.",
+            "needs_review_count": n, "hidden_damage_flag": False, "rows": rows, "hidden_damage": None, "hidden_damage_note": None,
+            "estimate": [{"part_id": r["part_ids"][0], "part_name": (r["part_names"] or [None])[0], "severity": r["severity"], "fix_type": r["fix_type"]}
+                         for r in rows if r["part_ids"]]}
