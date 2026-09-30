@@ -6,12 +6,14 @@ import os
 import streamlit as st
 from PIL import Image, ImageOps
 
+import api
 import logic as L
 
 st.set_page_config(page_title="Car Damage Check | Vehicle inspection", page_icon="🔍", layout="wide")
-try:  # optional real model endpoint (.streamlit/secrets.toml)
-    if "MODEL_API_URL" in st.secrets:
-        os.environ["MODEL_API_URL"] = st.secrets["MODEL_API_URL"]
+try:  # backend settings from .streamlit/secrets.toml or Streamlit Cloud secrets
+    for _k in ("API_BASE_URL", "API_KEY", "RUN_GLM"):
+        if _k in st.secrets:
+            os.environ[_k] = str(st.secrets[_k])
 except Exception:
     pass
 
@@ -199,6 +201,160 @@ def example(damage, variant=0):
     return drawn_example(damage, variant)
 
 
+# ---------------- backend ----------------
+@st.cache_data(ttl=45, show_spinner=False)
+def backend_health(base):
+    try:
+        return {"ok": True, **api.health()}
+    except api.ApiError as e:
+        return {"ok": False, "error": str(e)}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def backend_taxonomy(base):
+    try:
+        return {"parts": api.parts(), "detectors": api.detectors()}
+    except api.ApiError:
+        return {"parts": [], "detectors": []}
+
+
+@st.cache_data(show_spinner=False)
+def api_quality(base, data):
+    try:
+        return api.quality(data)
+    except api.ApiError:
+        return None
+
+
+BACKEND = api.enabled()
+_H = backend_health(api.base_url()) if BACKEND else None
+_T = backend_taxonomy(api.base_url()) if (_H and _H["ok"]) else {"parts": [], "detectors": []}
+PART_ID = {(p.get("label") or p.get("part_name")): p["part_id"] for p in _T["parts"]}
+LIVE = bool(_H and _H["ok"] and PART_ID)
+PANEL_OPTIONS = list(PART_ID) if LIVE else L.PANELS
+
+
+def damage_key(dmg):
+    for d in _T["detectors"]:
+        if dmg.lower() in (str(d.get("key", "")).lower(), str(d.get("label", "")).lower()):
+            return d["key"]
+    return dmg.lower()
+
+
+def views_for(panel):
+    """Which photo shows this part. Ambiguous parts (roof, wheels) are checked on every photo."""
+    p = panel.lower()
+    for words, v in ((("left",), "Left"), (("right",), "Right"), (("rear", "back", "trunk", "tail", "boot"), "Rear"),
+                     (("front", "hood", "bonnet", "head", "windshield", "windscreen", "grille"), "Front")):
+        if any(w in p for w in words):
+            return [v]
+    return list(L.VIEWS)
+
+
+def run_live(towed, rep_text):
+    if towed:
+        return {"kind": "major", "res": api.major(ss.photos, rep_text, run_glm=os.environ.get("RUN_GLM", "true").lower() != "false")}
+    checks = []
+    for panel, dmg in ss.declared:
+        best = None
+        for v in views_for(panel):
+            if v in ss.photos:
+                r = api.minor_check(damage_key(dmg), ss.photos[v])
+                if best is None or (r.get("max_conf") or 0) > (best.get("max_conf") or 0):
+                    best = {**r, "_view": v}
+        checks.append({"panel": panel, "damage": dmg, "chk": best})
+    if checks:
+        items = [api.minor_item(c["chk"], PART_ID[c["panel"]], damage_key(c["damage"])) for c in checks if c["chk"]]
+        return {"kind": "minor", "checks": checks, "final": api.minor_finalize(items)}
+    found = []
+    for v in L.VIEWS:
+        for d in (api.detect(ss.photos[v]).get("results") or {}).values():
+            if d.get("fired"):
+                found.append((v, d.get("label") or d.get("key")))
+    return {"kind": "none", "found": found}
+
+
+def pretty(x):
+    return str(x or "").replace("_", " ").strip().capitalize()
+
+
+def pct(x):
+    return "—" if x is None else f"{float(x):.0%}"
+
+
+def e(x):
+    return html.escape(str(x))
+
+
+def live_table(title, heads, rows):
+    th = "".join(f"<th>{e(h)}</th>" for h in heads)
+    body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows)
+    st.markdown(f"<div class='tbl'><h3>{e(title)}</h3><table><thead><tr>{th}</tr></thead><tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
+
+
+def status_cell(status):
+    return f"<span class='{'s-NeedsReview' if 'review' in str(status).lower() else 's-Matched'}'>{e(pretty(status))}</span>"
+
+
+def render_live(live):
+    kind = live["kind"]
+    if kind == "minor":
+        fin = live["final"]
+        outcome, summary, review = fin.get("outcome"), fin.get("summary"), fin.get("needs_review_count", 0)
+        rows_in = fin.get("rows") or []
+        stats = [("Checked", len(rows_in)), ("Needs review", review), ("Hidden damage flag", "Yes" if fin.get("hidden_damage_flag") else "No")]
+    elif kind == "major":
+        res = live["res"]
+        outcome, summary = res.get("outcome"), res.get("summary")
+        rows_in = res.get("visible_report") or []
+        review = sum("review" in str(r.get("status", "")).lower() for r in rows_in)
+        stats = [("Damage seen in photos", len(res.get("visible_detected") or [])), ("Damage in report", len(res.get("garage_items") or [])), ("Needs review", review)]
+    else:
+        outcome = "needs_review" if live["found"] else "matched"
+        summary = "The model found damage you did not declare." if live["found"] else "No damage declared and none detected."
+        stats = [("Declared", 0), ("Model findings", len(live["found"])), ("Needs review", len(live["found"]))]
+    bad = "review" in str(outcome).lower()
+    st.markdown(f"<div class='banner {'bad' if bad else 'ok'}'><div><h3>{e(pretty(outcome))}</h3><p>{e(summary or '')}</p></div></div>", unsafe_allow_html=True)
+    st.markdown("<div class='stats'>" + "".join(f"<div class='stat'><b>{e(v)}</b><span>{e(t)}</span></div>" for t, v in stats) + "</div>", unsafe_allow_html=True)
+    if kind == "minor":
+        live_table("Declared damage vs model", ["Part", "Damage", "Confidence", "Severity", "Fix", "Status", "Reason"],
+                   [[e(", ".join(x for x in (r.get("part_names") or []) if x) or "—"), e(r.get("damage") or pretty(r.get("damage_type"))), pct(r.get("max_conf")),
+                     e(round(r["severity"]) if r.get("severity") is not None else "—"), e(pretty(r.get("fix_type"))), status_cell(r.get("status")),
+                     e(r.get("reason") or "")] for r in rows_in])
+    elif kind == "major":
+        if res.get("garage_items"):
+            st.markdown("**Damage read from the garage report**  \n" + " ".join(f"<span class='tag'>{e(g)}</span>" for g in res["garage_items"]), unsafe_allow_html=True)
+        mark = {True: "Yes", False: "No", None: "—"}
+        live_table("Garage report vs photos", ["Damage", "In report", "Seen in photos", "Status", "Reason"],
+                   [[e(r.get("damage")), mark[r.get("in_garage_report")], mark[r.get("model_detected")], status_cell(r.get("status")), e(r.get("reason") or "")] for r in rows_in])
+    else:
+        live_table("Model findings", ["Photo", "Damage"], [[e(v), e(d)] for v, d in live["found"]])
+    src = live["final"] if kind == "minor" else (live.get("res") or {})
+    hd, note = src.get("hidden_damage"), src.get("hidden_damage_note")
+    if hd or note:
+        with st.container(key="card_hidden"):
+            st.markdown("**Hidden damage assessment**")
+            if hd:
+                st.markdown(f"<div class='note {'warn' if hd.get('hidden_damage_likely') else 'ok'}'>{e(pretty(hd.get('verdict')))}. {e(hd.get('summary') or '')}</div>", unsafe_allow_html=True)
+                with st.expander("Details"):
+                    st.json(hd)
+            if note:
+                st.caption(note)
+    est = src.get("estimate")
+    if est:
+        live_table("Repair estimate", ["Part", "Severity", "Fix"], [[e(r.get("part_name") or r.get("part_id")), e(round(r.get("severity") or 0)), e(pretty(r.get("fix_type")))] for r in est])
+    imgs = ([(f"{c['panel']} · {c['damage']} · {c['chk'].get('_view')} photo", c["chk"].get("image_jpeg_b64")) for c in live["checks"] if c["chk"]] if kind == "minor"
+            else [(p.get("caption") or p.get("key"), p.get("image_jpeg_b64")) for p in (live["res"].get("photos") or [])] if kind == "major" else [])
+    imgs = [(c, api.b64_bytes(b)) for c, b in imgs if b]
+    if imgs:
+        st.markdown("### Photo findings")
+        cols = st.columns(2)
+        for i, (cap, data) in enumerate(imgs):
+            with cols[i % 2], st.container(key=f"card_live_{i}"):
+                st.image(data)
+                st.markdown(f"<span class='hint'>{e(cap)}</span>", unsafe_allow_html=True)
+
+
 def photo_status():
     out = {}
     for v, d in ss.photos.items():
@@ -209,6 +365,10 @@ def photo_status():
                     and check(ed)["hash"] is not None and L.hamming(r["hash"], check(ed)["hash"]) <= L.DUP_BITS:
                 blocking.append(f"This looks the same as your {e.lower()} photo. Use a different angle.")
                 break
+        if LIVE and r["hash"] is not None:
+            q = api_quality(api.base_url(), d)
+            if q and not q.get("ok", True):
+                blocking.append(" ".join(q.get("notes") or [q.get("summary") or "Photo did not pass the quality check."]))
         out[v] = {**r, "blocking": blocking}
     return out
 
@@ -280,10 +440,12 @@ good = [v for v in L.VIEWS if v in stat and not stat[v]["blocking"] and (not sta
 photo_ready = len(good) == 4
 items = ss.garage if towed else ss.declared
 rep = ss.report
-form_ready = (bool(rep) and not rep["error"]) if towed \
+form_ready = (bool(rep) and not rep["error"] and (not LIVE or bool((rep.get("text") or "").strip()))) if towed \
     else bool((items or ss.flags["none_minor"]) and ss.flags["confirmed"])
 sig = hashlib.md5(b"".join(ss.photos[v] for v in L.VIEWS if v in ss.photos)).hexdigest()
-dets_ok = ss.get("dets") is not None and ss.get("dets_sig") == sig
+rep_text = (rep or {}).get("text", "") if towed else ""
+run_sig = hashlib.md5((sig + repr(ss.declared) + str(towed) + rep_text).encode()).hexdigest()
+dets_ok = (ss.get("live") is not None and ss.get("live_sig") == run_sig) if LIVE else (ss.get("dets") is not None and ss.get("dets_sig") == sig)
 stages = ["Garage report" if towed else "Damage details", "Photos", "Results"]
 
 # ---------------- hero ----------------
@@ -316,6 +478,9 @@ with left:
     st.markdown("<div class='prog'><span>INSPECTION TYPE</span></div>", unsafe_allow_html=True)
     st.segmented_control("Inspection type", ["Not towed", "Towed"], key="towed_ui", on_change=_seg, label_visibility="collapsed")
     st.markdown("<div class='hint'>You can switch at any time. Your photos will stay in place.</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='hint' style='margin-top:.8rem'>{'● Connected to the detection API' if LIVE else '○ Demo mode: no backend connected'}</div>", unsafe_allow_html=True)
+    if BACKEND and not LIVE:
+        st.caption("Backend not available: " + (_H.get("error") if _H and not _H["ok"] else "it returned no parts list."))
 
 # ---------------- main ----------------
 with right:
@@ -324,7 +489,7 @@ with right:
              "Attach the garage report." if towed else "Add any visible damage you notice on the vehicle.")
         if towed:
             with st.container(key="card_report"):
-                st.markdown("**Garage report**  \n<span class='hint'>PDF, image or CSV · up to 15 MB</span>", unsafe_allow_html=True)
+                st.markdown("**Garage report**  \n<span class='hint'>PDF, CSV, text or image · up to 15 MB</span>", unsafe_allow_html=True)
                 if rep:
                     st.markdown(f"<div class='note {'bad' if rep['error'] else 'ok'}'>"
                                 f"{html.escape(rep['error'] or rep['name'] + ' accepted. ' + rep['note'])}</div>", unsafe_allow_html=True)
@@ -333,27 +498,41 @@ with right:
                         ss.rep_n += 1
                         st.rerun()
                 else:
-                    up = st.file_uploader("Upload report", type=["pdf", "csv", "jpg", "jpeg", "png"], key=f"rep_up_{ss.rep_n}",
+                    up = st.file_uploader("Upload report", type=["pdf", "csv", "txt", "jpg", "jpeg", "png"], key=f"rep_up_{ss.rep_n}",
                                           label_visibility="collapsed")
                     if up is not None:
                         r = L.validate_report(up.name, up.getvalue())
-                        ss.report = {"name": up.name, "error": r["error"] and r["error"] + ".", "note": r["note"]}
+                        ss.report = {"name": up.name, "error": r["error"] and r["error"] + ".", "note": r["note"], "text": r.get("text", "")}
                         ss.garage = list(r["items"])
                         st.rerun()
             if rep and not rep["error"]:
                 g = ss.garage
+                exact = rep["name"].lower().endswith(".csv")
                 st.markdown("### Garage report summary")
+                if LIVE and not exact:  # the backend reads the text; do not show the mock extractor's items
+                    txt = (rep.get("text") or "").strip()
+                    st.markdown("<div class='stats'>" + "".join(f"<div class='stat'><b{c}>{v}</b><span>{t}</span></div>" for t, v, c in
+                                [("Report file", html.escape(rep["name"]), " class='sm'"), ("Characters read", len(txt), "")]) + "</div>", unsafe_allow_html=True)
+                    if txt:
+                        with st.expander("Text that will be sent to the backend"):
+                            st.text(txt[:1500])
+                        st.caption("The backend reads the damage from this text when you run the check.")
+                    else:
+                        st.markdown("<div class='note bad'>No text could be read from this file. Upload a PDF with selectable text, a CSV or a text file.</div>", unsafe_allow_html=True)
+                    g = None
                 st.markdown("<div class='stats'>" + "".join(f"<div class='stat'><b{cls}>{v}</b><span>{t}</span></div>" for t, v, cls in
                             [("Damage items", len(g), ""), ("Parts affected", len({p for p, _ in g}), ""),
                              ("Report file", html.escape(rep["name"]), " class='sm'")]) + "</div>", unsafe_allow_html=True)
-                if g:
+                if g is None:
+                    pass
+                elif g:
                     rows = "".join(f"<tr><td><b>{html.escape(p)}</b></td><td><span class='tag'>{html.escape(d)}</span></td></tr>" for p, d in g)
                     st.markdown(f"<div class='tbl'><h3>Damage listed in the report</h3><table><thead><tr><th>Part</th><th>Damage</th></tr></thead>"
                                 f"<tbody>{rows}</tbody></table></div>", unsafe_allow_html=True)
                 else:
                     st.markdown("<div class='banner ok'><div><h3>No damage listed</h3><p>The garage report does not list any damage.</p></div></div>",
                                 unsafe_allow_html=True)
-                if not os.environ.get("MODEL_API_URL") and not rep["name"].lower().endswith(".csv"):
+                if not LIVE and not rep["name"].lower().endswith(".csv"):
                     st.caption("Demo mode: PDF and image reports are read with a simulated extractor. CSV reports are read exactly.")
         else:
             key = "declared"
@@ -363,7 +542,7 @@ with right:
                 if b.button("Guide", icon=":material/help:", key="guide_btn"):
                     guide(ss.get(f"{key}_dmg", L.DAMAGES[0]))
                 c1, c2, c3 = st.columns([3, 3, 1.4], vertical_alignment="bottom")
-                c1.selectbox("Vehicle part", L.PANELS, key=f"{key}_panel")
+                c1.selectbox("Vehicle part", PANEL_OPTIONS, key=f"{key}_panel")
                 c2.selectbox("Damage type", L.DAMAGES, key=f"{key}_dmg")
                 c3.button("Add", icon=":material/add:", key=f"{key}_add", type="primary", on_click=add_item, args=(key,))
                 st.divider()
@@ -446,17 +625,26 @@ with right:
                 a, b = st.columns([4, 1.3], vertical_alignment="center")
                 a.markdown(f"**Ready to compare**  \n<span class='hint'>Four photos and {'garage report' if towed else 'damage details'} complete</span>", unsafe_allow_html=True)
                 if b.button("Run again" if dets_ok else "Run detection", icon=":material/play_arrow:", key="run", type="primary"):
+                    ss.run_error = None
                     with st.spinner("Checking…"):
                         try:
-                            ss.dets = [d for v in L.VIEWS for d in L.detect_damage(v, ss.photos[v])]
-                            ss.dets_sig = sig
-                        except Exception as e:
+                            if LIVE:
+                                ss.live, ss.live_sig = run_live(towed, rep_text), run_sig
+                            else:
+                                ss.dets = [d for v in L.VIEWS for d in L.detect_damage(v, ss.photos[v])]
+                                ss.dets_sig = sig
+                        except Exception as ex:
+                            ss.pop("live", None)
                             ss.pop("dets", None)
-                            st.error(f"Model call failed: {e}")
+                            ss.run_error = f"Check failed: {ex}"
                     st.rerun()
-            if not os.environ.get("MODEL_API_URL"):
+            if ss.get("run_error"):
+                st.error(ss.run_error)
+            if not LIVE:
                 st.caption("Demo mode: findings are simulated until a real detection service is connected.")
-            if dets_ok:
+            if dets_ok and LIVE:
+                render_live(ss.live)
+            elif dets_ok:
                 df = L.compare(items, ss.dets, not towed)
                 bad = L.outcome(df) == "Needs review"
                 st.markdown(f"<div class='banner {'bad' if bad else 'ok'}'><div><h3>{'Needs review' if bad else 'Matched'}</h3><p>"
@@ -481,5 +669,5 @@ with right:
                     with cols[i % 2], st.container(key=f"card_find_{v}"):
                         st.image(L.annotate(ss.photos[v], dv))
                         st.markdown(f"**{v}** <span class='hint'>· {len(dv)} finding(s)</span>", unsafe_allow_html=True)
-            elif ss.get("dets") is not None:
-                st.warning("Photos changed since the last run. Run detection again.")
+            elif ss.get("dets") is not None or ss.get("live") is not None:
+                st.warning("Your inputs changed since the last run. Run detection again.")
