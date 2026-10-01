@@ -74,7 +74,7 @@ def test_problems_are_listed_until_every_damage_has_a_checked_photo():
     at = fresh()
     at.session_state["mn_types"] = ["Scratch", "Dent"]
     at.run()
-    assert "Add a photo of the scratch." in text(at) and "Add a photo of the dent." in text(at)
+    assert "Choose where the scratch is and add a photo." in text(at) and "Choose where the dent is and add a photo." in text(at)
     assert at.button(key="to1").disabled
 
 
@@ -111,12 +111,63 @@ def test_other_damage_suggestion_adds_the_type_and_reuses_the_photo():
     at.session_state["mn_types"] = ["Scratch"]
     at.session_state["mn_inst"] = {"Scratch": [inst(1, d, ["Hood"], chk)]}
     at.session_state["mn_seq"] = 1
+    at.session_state["flags"] = {"none_minor": False, "none_major": False, "confirmed": True}
     at.run()
     at.button(key="oth_1_Dent").click().run()
     assert not at.exception, at.exception
+    assert at.session_state["flags"]["confirmed"] is False     # the list changed, so ask again
     assert at.session_state["mn_types"] == ["Dent", "Scratch"] or set(at.session_state["mn_types"]) == {"Scratch", "Dent"}
     dent = at.session_state["mn_inst"]["Dent"][-1]
     assert dent["data"] == d and dent["parts"] == ["Hood"] and dent["chk"] is not None
+
+
+def test_photo_slot_opens_only_after_the_location_is_chosen():
+    at = fresh()
+    at.session_state["mn_types"] = ["Scratch"]
+    at.session_state["mn_inst"] = {"Scratch": [inst(1, None, [])]}
+    at.session_state["mn_seq"] = 1
+    at.run()
+    assert not at.exception, at.exception
+    assert "Choose the location first" in text(at) and "Waiting for the location and a photo." in text(at)
+    assert not at.get("file_uploader")
+    at.session_state["mn_inst"]["Scratch"][0]["parts"] = ["Hood"]
+    at.run()
+    assert not at.exception and at.get("file_uploader")
+    assert "Upload a clear photo of the scratch on the hood." in " ".join(c.value for c in at.caption)
+    assert "Waiting for a photo." in text(at)
+
+
+def test_location_is_asked_before_the_photo_in_the_to_do_list():
+    at = fresh()
+    at.session_state["mn_types"] = ["Dent"]
+    at.session_state["mn_inst"] = {"Dent": [inst(1, None, ["Roof"])]}
+    at.session_state["mn_seq"] = 1
+    at.run()
+    assert "Add a photo of the dent." in text(at)            # location known, photo missing
+    assert at.button(key="to1").disabled
+
+
+def test_confirm_checkbox_unlocks_only_when_everything_is_ready():
+    at = fresh()
+    at.session_state["mn_types"] = ["Scratch"]
+    at.run()
+    assert at.checkbox(key="cb_confirmed").disabled
+    seed_minor(at, [("Scratch", [(["Hood"], 1)])])
+    at.session_state["flags"] = {"none_minor": False, "none_major": False, "confirmed": False}
+    at.run()
+    assert not at.checkbox(key="cb_confirmed").disabled
+    assert at.button(key="to1").disabled                      # still needs the confirmation
+
+
+def test_extra_empty_photo_slot_can_be_cancelled():
+    at = fresh()
+    seed_minor(at, [("Dent", [(["Roof"], 2)])])
+    at.run()
+    at.button(key="more_Dent").click().run()
+    assert len(at.session_state["mn_inst"]["Dent"]) == 2
+    new_id = at.session_state["mn_inst"]["Dent"][-1]["id"]
+    at.button(key=f"cx_{new_id}").click().run()
+    assert len(at.session_state["mn_inst"]["Dent"]) == 1 and not at.exception
 
 
 def test_changing_threshold_marks_checks_stale_and_recheck_clears_it():
@@ -142,19 +193,32 @@ def test_no_visible_damage_gives_a_matched_outcome():
     assert "No damage was declared" in text(at)
 
 
-def test_towed_form_comes_before_photos():
+def test_towed_photos_come_before_garage_report():
     at = towed(fresh())
     at.run()
-    assert "Garage report" in text(at)
-    at.session_state["step"] = 1; at.run()
     assert "Capture the vehicle" in text(at)
+    assert [b.label for b in at.button if b.key and b.key.startswith(("nav_", "navon_"))] == ["Photos", "Garage report", "Results"]
+    assert at.button(key="to1").disabled                      # no photos yet
+    at.session_state["step"] = 1; at.run()
+    assert "Garage report" in text(at) and "Capture the vehicle" not in text(at)
 
 
-def test_towed_photos_step_needs_form_first():
-    at = towed(fresh()); seed_photos(at); at.session_state["step"] = 1; at.run()
-    assert at.button(key="to2").disabled
+def test_towed_garage_step_needs_photos_and_report():
+    at = towed(fresh()); seed_photos(at); at.run()
+    assert not at.button(key="to1").disabled                  # four good photos -> can continue
+    at.session_state["step"] = 1; at.run()
+    assert at.button(key="to2").disabled                      # no report yet
     at.session_state["step"] = 2; at.run()
     assert "Complete your inspection first" in text(at)
+    at.button(key="gate").click().run()
+    assert at.session_state["step"] == 1                      # photos done, so it sends you to the report
+
+
+def test_towed_results_gate_sends_you_to_photos_when_missing():
+    at = towed(fresh())
+    at.session_state["report"] = {"name": "r.txt", "error": None, "note": "ok", "text": "Hood dent"}
+    at.session_state["step"] = 2; at.run()
+    assert "Accept all four photos" in text(at)
     at.button(key="gate").click().run()
     assert at.session_state["step"] == 0
 
@@ -165,7 +229,7 @@ def test_towed_demo_flow_and_switching_keeps_photos():
     assert len(at.session_state["photos"]) == 4
     at.session_state["report"] = {"name": "r.pdf", "error": None, "note": "ok", "text": ""}
     at.session_state["garage"] = [("Hood", "Dent")]
-    at.session_state["step"] = 0; at.run()
+    at.session_state["step"] = 1; at.run()
     assert "Garage report summary" in text(at) and not at.exception
     at.session_state["step"] = 2; at.run()
     at.button(key="run").click().run()
@@ -177,10 +241,10 @@ def test_duplicate_towed_photo_blocked():
     a = scene(1)
     at.session_state["photos"] = {"Front": a, "Rear": a}
     at.session_state["seq"] = {"Front": 1, "Rear": 2}
-    at.session_state["step"] = 1
+    at.session_state["step"] = 0
     at.run()
     assert "looks the same as your front photo" in text(at)
-    assert at.button(key="to2").disabled
+    assert at.button(key="to1").disabled
 
 
 def test_journey_switch_returns_to_the_first_step():
@@ -284,7 +348,7 @@ def test_live_towed_pdf_summary_does_not_crash():
     with backend():
         at = towed(fresh())
         at.session_state["report"] = {"name": "r.pdf", "error": None, "note": "ok", "text": "Hood dent"}
-        at.session_state["step"] = 0; at.run()
+        at.session_state["step"] = 1; at.run()
         assert not at.exception, at.exception
         assert "Text that will be sent to the backend" in " ".join(x.label for x in at.expander)
 
@@ -293,7 +357,7 @@ def test_live_backend_quality_rejects_towed_photo():
     with backend():
         at = towed(fresh())
         at.session_state["photos"] = {"Front": scene(7) + b"BADQUALITY"}; at.session_state["seq"] = {"Front": 1}
-        at.session_state["step"] = 1; at.run()
+        at.session_state["step"] = 0; at.run()
         assert "out of focus" in text(at)
 
 
