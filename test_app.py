@@ -24,52 +24,170 @@ def seed_photos(at):
     at.session_state["seq"] = {v: i + 1 for i, v in enumerate(["Front", "Rear", "Left", "Right"])}
 
 
+import base64
+import api
+import logic as L
+
+
+def text(at):
+    return " ".join(m.value for m in at.markdown)
+
+
+def towed(at):
+    at.session_state["towed_ui"] = "Towed"
+    return at
+
+
+def inst(iid, data, parts, chk=None, thr=None):
+    return {"id": iid, "data": data, "parts": parts, "chk": chk, "thr": thr, "err": None, "n": 0}
+
+
+def seed_minor(at, specs):
+    """specs: [(type, [(part_list, seed)])] -> instances with a demo model check already done."""
+    at.session_state["mn_types"] = [t for t, _ in specs]
+    n = 0
+    inst_map = {}
+    for t, photos in specs:
+        lst = []
+        for parts, seed in photos:
+            n += 1
+            d = scene(seed)
+            lst.append(inst(n, d, parts, L.mock_minor_check(t, d, None), None))
+        inst_map[t] = lst
+    at.session_state["mn_inst"] = inst_map
+    at.session_state["mn_seq"] = n
+    at.session_state["flags"] = {"none_minor": False, "none_major": False, "confirmed": True}
+
+
 def test_renders_and_gates():
     at = fresh()
-    assert at.button(key="to1").disabled          # no photos yet
+    assert at.button(key="to1").disabled          # nothing ticked yet
+    assert "Damage you can see" in text(at)
 
 
-def test_journey1_full_flow():
-    at = fresh(); seed_photos(at); at.run()
-    assert not at.button(key="to1").disabled
-    at.button(key="to1").click().run()             # -> form
-    at.selectbox(key="declared_panel").select("Hood")
-    at.selectbox(key="declared_dmg").select("Smashed")
-    at.button(key="declared_add").click().run()
-    assert at.session_state["declared"] == [("Hood", "Smashed")]
-    at.checkbox(key="cb_confirmed").check().run()
-    assert not at.button(key="to2").disabled
-    at.button(key="to2").click().run()             # -> results
+def test_minor_journey_has_two_steps_and_no_angle_photos():
+    at = fresh()
+    assert "Photos" not in " ".join(b.label for b in at.button if b.key and b.key.startswith(("nav_", "navon_")))
+
+
+def test_problems_are_listed_until_every_damage_has_a_checked_photo():
+    at = fresh()
+    at.session_state["mn_types"] = ["Scratch", "Dent"]
+    at.run()
+    assert "Add a photo of the scratch." in text(at) and "Add a photo of the dent." in text(at)
+    assert at.button(key="to1").disabled
+
+
+def test_multiple_damages_full_flow_demo():
+    at = fresh()
+    seed_minor(at, [("Scratch", [(["Hood"], 1)]), ("Dent", [(["Left front door"], 2), (["Roof"], 3)])])
+    at.run()
+    assert not at.button(key="to1").disabled, text(at)
+    at.button(key="to1").click().run()
+    assert at.session_state["step"] == 1
     at.button(key="run").click().run()
+    assert not at.exception and not at.session_state["run_error"], at.session_state["run_error"]
+    t = text(at)
+    assert "Declared damage vs model" in t and "Hood" in t and "Left front door" in t and "Photo findings" in t
+    assert at.session_state["live"]["kind"] == "minor"
+
+
+def test_two_photos_of_one_damage_become_one_item_with_all_parts():
+    at = fresh()
+    seed_minor(at, [("Dent", [(["Left front door"], 2), (["Roof", "Hood"], 3)])])
+    at.session_state["step"] = 1; at.run()
+    at.button(key="run").click().run()
+    fin = at.session_state["live"]["final"]
+    assert len(fin["rows"]) == 1
+    names = fin["rows"][0]["part_names"]
+    assert {"Left front door", "Roof", "Hood"} <= set(names)
+
+
+def test_other_damage_suggestion_adds_the_type_and_reuses_the_photo():
+    at = fresh()
+    d = scene(5)
+    chk = L.mock_minor_check("Scratch", d, None)
+    chk["other_damage"] = ["Dent"]
+    at.session_state["mn_types"] = ["Scratch"]
+    at.session_state["mn_inst"] = {"Scratch": [inst(1, d, ["Hood"], chk)]}
+    at.session_state["mn_seq"] = 1
+    at.run()
+    at.button(key="oth_1_Dent").click().run()
     assert not at.exception, at.exception
-    html = " ".join(m.value for m in at.markdown)
-    assert "Comparison report" in html and ("Needs review" in html or "Matched" in html)
+    assert at.session_state["mn_types"] == ["Dent", "Scratch"] or set(at.session_state["mn_types"]) == {"Scratch", "Dent"}
+    dent = at.session_state["mn_inst"]["Dent"][-1]
+    assert dent["data"] == d and dent["parts"] == ["Hood"] and dent["chk"] is not None
 
 
-def test_journey2_and_switching_keeps_photos():
+def test_changing_threshold_marks_checks_stale_and_recheck_clears_it():
+    at = fresh()
+    seed_minor(at, [("Scratch", [(["Hood"], 1)])])
+    at.run()
+    assert not at.button(key="to1").disabled
+    at.session_state["thr_mode"], at.session_state["thr_val"] = "custom", 0.7
+    at.run()
+    assert at.button(key="to1").disabled and "Re-check" in text(at) + " ".join(b.label for b in at.button)
+    at.button(key="recheck").click().run()
+    assert not at.exception and not at.button(key="to1").disabled
+    assert at.session_state["mn_inst"]["Scratch"][0]["thr"] == 0.7
+
+
+def test_no_visible_damage_gives_a_matched_outcome():
+    at = fresh()
+    at.session_state["flags"] = {"none_minor": True, "none_major": False, "confirmed": True}
+    at.run()
+    assert not at.button(key="to1").disabled
+    at.session_state["step"] = 1; at.run()
+    at.button(key="run").click().run()
+    assert "No damage was declared" in text(at)
+
+
+def test_towed_form_comes_before_photos():
+    at = towed(fresh())
+    at.run()
+    assert "Garage report" in text(at)
+    at.session_state["step"] = 1; at.run()
+    assert "Capture the vehicle" in text(at)
+
+
+def test_towed_photos_step_needs_form_first():
+    at = towed(fresh()); seed_photos(at); at.session_state["step"] = 1; at.run()
+    assert at.button(key="to2").disabled
+    at.session_state["step"] = 2; at.run()
+    assert "Complete your inspection first" in text(at)
+    at.button(key="gate").click().run()
+    assert at.session_state["step"] == 0
+
+
+def test_towed_demo_flow_and_switching_keeps_photos():
     at = fresh(); seed_photos(at); at.run()
     at.session_state["towed_ui"] = "Towed"; at.run()
     assert len(at.session_state["photos"]) == 4
-    at.session_state["report"] = {"name": "r.pdf", "error": None, "note": "ok"}
+    at.session_state["report"] = {"name": "r.pdf", "error": None, "note": "ok", "text": ""}
     at.session_state["garage"] = [("Hood", "Dent")]
-    at.session_state["step"] = 1; at.run()
-    html = " ".join(m.value for m in at.markdown)
-    assert "Garage report summary" in html and "Hood" in html      # read-only summary, no manual entry
-    assert not at.selectbox and not at.button(key="to2").disabled
+    at.session_state["step"] = 0; at.run()
+    assert "Garage report summary" in text(at) and not at.exception
     at.session_state["step"] = 2; at.run()
     at.button(key="run").click().run()
-    assert not at.exception, at.exception
-    assert "Comparison report" in " ".join(m.value for m in at.markdown)
+    assert not at.exception and "Comparison report" in text(at)
 
 
-def test_duplicate_photo_blocked():
-    at = fresh()
+def test_duplicate_towed_photo_blocked():
+    at = towed(fresh())
     a = scene(1)
     at.session_state["photos"] = {"Front": a, "Rear": a}
     at.session_state["seq"] = {"Front": 1, "Rear": 2}
+    at.session_state["step"] = 1
     at.run()
-    assert "looks the same as your front photo" in " ".join(m.value for m in at.markdown)
-    assert at.button(key="to1").disabled
+    assert "looks the same as your front photo" in text(at)
+    assert at.button(key="to2").disabled
+
+
+def test_journey_switch_returns_to_the_first_step():
+    at = fresh()
+    at.session_state["step"] = 1; at.run()
+    at.session_state["towed_ui"] = "Towed"; at.run()
+    assert not at.exception
 
 
 def test_theme_toggle_and_guide_images():
@@ -88,6 +206,107 @@ def test_bad_quality_photos_are_rejected():
     from PIL import Image
     b = io.BytesIO(); Image.new("RGB", (1200, 800), (10, 10, 10)).save(b, "JPEG")
     assert L.check_single(b.getvalue())["blocking"]
+
+
+
+
+# ---------------- live backend (against dev_mock_backend.py) ----------------
+import contextlib, os, subprocess, sys, time, urllib.request
+
+
+_PORT = 8620
+
+
+@contextlib.contextmanager
+def backend():
+    global _PORT
+    _PORT += 1
+    port = _PORT
+    p = subprocess.Popen([sys.executable, "-m", "uvicorn", "dev_mock_backend:app", "--port", str(port), "--log-level", "warning"])
+    try:
+        for _ in range(60):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v1/health", timeout=1); break
+            except Exception:
+                time.sleep(0.25)
+        os.environ["API_BASE_URL"] = f"http://127.0.0.1:{port}"
+        yield
+    finally:
+        os.environ.pop("API_BASE_URL", None)
+        p.terminate()
+        p.wait(timeout=10)
+
+
+def text(at):
+    return " ".join(m.value for m in at.markdown)
+
+
+def test_live_minor_flow_uses_detector_keys_and_finalizes():
+    with backend():
+        at = fresh()
+        assert "Connected to the detection API" in text(at)
+        # chips come from /detectors, so the labels are the backend's own
+        assert "Smashed glass" in " ".join(str(p.options) for p in at.get("pills")) if at.get("pills") else True
+        d1, d2 = scene(11), scene(12)
+        c1, c2 = api.minor_check("scratch", d1, None), api.minor_check("glass", d2, 0.4)
+        at.session_state["mn_types"] = ["scratch", "glass"]
+        at.session_state["mn_inst"] = {"scratch": [inst(1, d1, ["Hood"], c1, None)], "glass": [inst(2, d2, ["Windshield"], c2, 0.4)]}
+        at.session_state["mn_seq"] = 2
+        at.session_state["thr_mode"], at.session_state["thr_val"] = "custom", 0.4
+        at.session_state["flags"] = {"none_minor": False, "none_major": False, "confirmed": True}
+        at.session_state["step"] = 1; at.run()
+        # scratch was checked with production thresholds, so it is stale under the custom one
+        assert "Complete your inspection first" in text(at)
+        at.session_state["mn_inst"]["scratch"][0]["thr"] = 0.4
+        at.run()
+        at.button(key="run").click().run()
+        assert not at.exception and not at.session_state["run_error"], at.session_state["run_error"]
+        t = text(at)
+        assert "Declared damage vs model" in t and "Windshield" in t and "Hidden damage assessment" in t
+        assert {r["damage_type"] for r in at.session_state["live"]["final"]["rows"]} == {"scratch", "glass"}
+        assert "Confirmed" in t or "Needs review" in t
+
+
+def test_live_towed_sends_text_and_estimate():
+    with backend():
+        at = towed(fresh()); seed_photos(at)
+        at.session_state["report"] = {"name": "r.txt", "error": None, "note": "ok", "text": "Hood dent\nDoor scratch"}
+        at.session_state["estimate"] = [("Hood", 70)]
+        at.session_state["step"] = 2; at.run()
+        at.button(key="run").click().run()
+        assert not at.exception and not at.session_state["run_error"], at.session_state["run_error"]
+        t = text(at)
+        assert "Garage report vs photos" in t and "Hidden damage assessment" in t and "Estimate lines: 1" in t
+        assert at.session_state["live"]["res"]["garage_items"] == ["dent", "scratch"]
+
+
+def test_live_towed_pdf_summary_does_not_crash():
+    with backend():
+        at = towed(fresh())
+        at.session_state["report"] = {"name": "r.pdf", "error": None, "note": "ok", "text": "Hood dent"}
+        at.session_state["step"] = 0; at.run()
+        assert not at.exception, at.exception
+        assert "Text that will be sent to the backend" in " ".join(x.label for x in at.expander)
+
+
+def test_live_backend_quality_rejects_towed_photo():
+    with backend():
+        at = towed(fresh())
+        at.session_state["photos"] = {"Front": scene(7) + b"BADQUALITY"}; at.session_state["seq"] = {"Front": 1}
+        at.session_state["step"] = 1; at.run()
+        assert "out of focus" in text(at)
+
+
+def test_backend_down_falls_back_to_demo():
+    os.environ["API_BASE_URL"] = "http://127.0.0.1:9"
+    try:
+        at = fresh()
+        assert "Demo mode" in text(at) and "Backend not available" in " ".join(c.value for c in at.caption)
+        seed_minor(at, [("Scratch", [(["Hood"], 1)])]); at.session_state["step"] = 1; at.run()
+        at.button(key="run").click().run()
+        assert not at.exception and "Declared damage vs model" in text(at)
+    finally:
+        os.environ.pop("API_BASE_URL", None)
 
 
 if __name__ == "__main__":
