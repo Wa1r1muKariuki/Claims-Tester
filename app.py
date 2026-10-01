@@ -395,6 +395,7 @@ def run_check(t, inst):
 def _types_changed():
     sel = ss.pills_types or []
     ss.mn_types = [tid for tid, lab in DTYPES if lab in sel]
+    ss.flags["confirmed"] = ss["cb_confirmed"] = False   # the list changed: ask again
 
 
 def _thr_mode():
@@ -435,6 +436,10 @@ def add_other(iid, other):
     ss.mn_inst[other] = [x for x in ss.mn_inst.get(other, []) if x["data"]] + [ni]
     ss.mn_types = [tid for tid, _ in DTYPES if tid in set(ss.mn_types) | {other}]
     ss.pills_types = [DLABEL[tid] for tid in ss.mn_types]
+    ss.flags["confirmed"] = ss["cb_confirmed"] = False
+
+
+CONFIRM_MSG = "Confirm the list is complete."
 
 
 def minor_problems():
@@ -445,7 +450,7 @@ def minor_problems():
         lab = DLABEL.get(t, t).lower()
         with_data = [i for i in ss.mn_inst.get(t, []) if i["data"]]
         if not with_data:
-            p.append(f"Add a photo of the {lab}.")
+            p.append(f"Choose where the {lab} is and add a photo." if not any(i["parts"] for i in ss.mn_inst.get(t, [])) else f"Add a photo of the {lab}.")
         for i in with_data:
             if i["err"] or not i["chk"]:
                 p.append(f"The {lab} photo did not pass: replace it.")
@@ -454,7 +459,7 @@ def minor_problems():
             if not i["parts"]:
                 p.append(f"Choose where the {lab} is on the vehicle.")
     if not ss.flags["confirmed"]:
-        p.append("Confirm the list is complete.")
+        p.append(CONFIRM_MSG)
     return list(dict.fromkeys(p))
 
 
@@ -484,12 +489,23 @@ def run_minor_final():
 
 
 def photo_side(t, j, total, inst, lab):
+    iid = inst["id"]
     if total > 1:
         st.markdown(f"**Photo {j}**")
+    # 1 · location comes first: the photo slot only opens once we know where the damage is
+    st.markdown("<div class='mc-h'>1 · Location</div>", unsafe_allow_html=True)
+    st.multiselect(f"Where is the {lab.lower()} on the vehicle?", PANEL_OPTIONS, default=[p for p in inst["parts"] if p in PANEL_OPTIONS], key=f"parts_{iid}",
+                   on_change=_parts, args=(iid,), placeholder=f"Choose the part(s) with the {lab.lower()}")
+    st.markdown("<div class='mc-h'>2 · Photo</div>", unsafe_allow_html=True)
     if not inst["data"]:
-        st.caption(f"Upload a clear photo of the {lab.lower()}.")
-        mode = st.segmented_control("Source", ["Upload", "Camera"], default="Upload", key=f"mode_{inst['id']}", label_visibility="collapsed")
-        k = f"{inst['id']}_{inst['n']}"
+        if not inst["parts"]:
+            st.markdown("<div class='mc-empty'>Choose the location first. The photo upload opens next.</div>", unsafe_allow_html=True)
+            if total > 1:
+                st.button("Cancel", key=f"cx_{iid}", icon=":material/close:", on_click=remove_inst, args=(t, iid))
+            return
+        st.caption(f"Upload a clear photo of the {lab.lower()} on the {' / '.join(inst['parts']).lower()}.")
+        mode = st.segmented_control("Source", ["Upload", "Camera"], default="Upload", key=f"mode_{iid}", label_visibility="collapsed")
+        k = f"{iid}_{inst['n']}"
         if mode == "Camera":
             f = st.camera_input(f"{lab} photo", key=f"cam_{k}", label_visibility="collapsed")
         else:
@@ -504,19 +520,19 @@ def photo_side(t, j, total, inst, lab):
             with st.spinner("Running model check…"):
                 run_check(t, inst)
             st.rerun()
+        if total > 1:
+            st.button("Cancel", key=f"cx_{iid}", icon=":material/close:", on_click=remove_inst, args=(t, iid))
         return
     st.image(inst["data"])
-    st.multiselect("Where on the vehicle?", PANEL_OPTIONS, default=[p for p in inst["parts"] if p in PANEL_OPTIONS], key=f"parts_{inst['id']}",
-                   on_change=_parts, args=(inst["id"],), placeholder="Choose the affected part(s)")
     b1, b2 = st.columns(2)
-    b1.button("Replace", key=f"rp_{inst['id']}", icon=":material/refresh:", on_click=replace_photo, args=(inst["id"],))
-    b2.button("Remove", key=f"rm_{inst['id']}", icon=":material/delete:", on_click=remove_inst, args=(t, inst["id"]))
+    b1.button("Replace", key=f"rp_{iid}", icon=":material/refresh:", on_click=replace_photo, args=(iid,))
+    b2.button("Remove", key=f"rm_{iid}", icon=":material/delete:", on_click=remove_inst, args=(t, iid))
 
 
 def check_panel(t, n, j, total, inst, lab):
-    st.markdown(f"<div class='mc-h'>{n}{'' if total == 1 else '.' + str(j)} · Model check</div>", unsafe_allow_html=True)
+    st.markdown("<div class='mc-h'>3 · Model check</div>", unsafe_allow_html=True)
     if not inst["data"]:
-        st.markdown("<div class='mc-empty'>Waiting for a photo.</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='mc-empty'>{'Waiting for a photo.' if inst['parts'] else 'Waiting for the location and a photo.'}</div>", unsafe_allow_html=True)
         return
     if inst["err"]:
         st.markdown(f"<div class='note bad'>{e(inst['err'])}</div>", unsafe_allow_html=True)
@@ -552,14 +568,16 @@ def damage_card(n, t):
     lab = DLABEL.get(t, t)
     done = [i for i in lst if i["data"]]
     if not done:
-        chip, col = "Add a photo", "var(--mfg)"
+        chip, col = ("Add a photo", "var(--mfg)") if any(i["parts"] for i in lst) else ("Add location", "var(--mfg)")
+    elif not all(i["parts"] for i in done):
+        chip, col = "Add location", "var(--warn)"
     elif all(i["chk"] and i["chk"].get("confirmed") for i in done):
         chip, col = "Confirmed", "var(--ok)"
     else:
         chip, col = "Needs review", "var(--warn)"
     with st.container(key=f"card_dmg_{t}"):
         st.markdown(f"<div class='ph-head'><span class='badge'>{n}</span><div><b>Damage {n} · {e(lab)}</b><br>"
-                    f"<span class='hint'>Upload a clear photo of the {e(lab.lower())}. Add more photos if it appears in several places.</span></div>"
+                    f"<span class='hint'>Say where the {e(lab.lower())} is, then upload a clear photo of it. Add more photos if it appears in several places.</span></div>"
                     f"<span class='tick' style='color:{col}'>{chip}</span></div>", unsafe_allow_html=True)
         for j, inst in enumerate(lst, 1):
             if j > 1:
@@ -601,8 +619,10 @@ def minor_step():
         st.checkbox("No visible damage to declare", value=ss.flags["none_minor"], key="cb_none_minor", on_change=_flag, args=("none_minor",))
     for n, t in enumerate(ss.mn_types, 1):
         damage_card(n, t)
-    st.checkbox("I confirm this list is complete", value=ss.flags["confirmed"], key="cb_confirmed", on_change=_flag, args=("confirmed",))
     probs = minor_problems()
+    open_items = [p for p in probs if p != CONFIRM_MSG]
+    st.checkbox("I confirm this list is complete", value=ss.flags["confirmed"], key="cb_confirmed", on_change=_flag, args=("confirmed",),
+                disabled=bool(open_items), help="Available once every damage has a location and a checked photo." if open_items else None)
     if probs:
         st.markdown("<div class='hint' style='color:var(--warn)'>Still to do: " + e(" · ".join(probs)) + "</div>", unsafe_allow_html=True)
     st.button("Review results", icon=":material/arrow_forward:", icon_position="right", key="to1", type="primary", disabled=bool(probs), on_click=go, args=(1,))
@@ -726,7 +746,7 @@ else:
     form_ready = not minor_problems()
     run_sig = hashlib.md5(json.dumps(minor_items(), sort_keys=True, default=str).encode()).hexdigest()
 dets_ok = (ss.get("live") is not None and ss.get("live_sig") == run_sig) if (LIVE or not towed) else (ss.get("dets") is not None and ss.get("dets_sig") == sig)
-stages = ["Garage report", "Photos", "Results"] if towed else ["Damage you can see", "Results"]
+stages = ["Photos", "Garage report", "Results"] if towed else ["Damage you can see", "Results"]
 
 # ---------------- hero ----------------
 img = f"<img src='{hero_uri()}' alt=''>" if hero_uri() else ""
@@ -747,8 +767,8 @@ left, right = st.columns([1, 3.6], gap="large")
 # ---------------- sidebar ----------------
 with left:
     st.markdown("<div class='side-h'>Your inspection</div>", unsafe_allow_html=True)
-    done = [form_ready, photo_ready, dets_ok] if towed else [form_ready, dets_ok]
-    icons = [":material/description:", ":material/photo_camera:", ":material/fact_check:"] if towed else [":material/add_a_photo:", ":material/fact_check:"]
+    done = [photo_ready, form_ready, dets_ok] if towed else [form_ready, dets_ok]
+    icons = [":material/photo_camera:", ":material/description:", ":material/fact_check:"] if towed else [":material/add_a_photo:", ":material/fact_check:"]
     for i, label in enumerate(stages):
         st.button(label, icon=":material/check_circle:" if done[i] else icons[i], key=f"{'navon' if ss.step == i else 'nav'}_{i}",
                   on_click=go, args=(i,))
@@ -773,8 +793,8 @@ with left:
 with right:
     if not towed and ss.step == 0:
         minor_step()
-    elif ss.step == 0:
-        head(1, "Garage report", "Attach the garage report and, optionally, its parts estimate.")
+    elif towed and ss.step == 1:
+        head(2, "Garage report", "Attach the garage report and, optionally, its parts estimate.")
         if towed:
             with st.container(key="card_report"):
                 st.markdown("**Garage report**  \n<span class='hint'>PDF, CSV, text or image · up to 15 MB</span>", unsafe_allow_html=True)
@@ -825,12 +845,16 @@ with right:
                     st.caption("Demo mode: PDF and image reports are read with a simulated extractor. CSV reports are read exactly.")
         if LIVE and rep and not rep["error"]:
             estimate_card()
-        st.button("Continue to photos", icon=":material/arrow_forward:", icon_position="right", key="to1", type="primary",
-                  disabled=not form_ready, on_click=go, args=(1,))
-    elif towed and ss.step == 1:
+        b1, b2 = st.columns(2)
+        b1.button(stages[0], icon=":material/arrow_back:", key="back0", on_click=go, args=(0,))
+        b2.button("Review results", icon=":material/arrow_forward:", icon_position="right", key="to2", type="primary",
+                  disabled=not (photo_ready and form_ready), on_click=go, args=(2,))
+        if not photo_ready:
+            st.markdown("<div class='hint' style='color:var(--warn)'>Add and accept all four photos before reviewing results.</div>", unsafe_allow_html=True)
+    elif towed and ss.step == 0:
         c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
         with c1:
-            head(2, "Capture the vehicle", "Add one clear photo from each angle.")
+            head(1, "Capture the vehicle", "Add one clear photo from each angle.")
         if c2.button("Photo requirements", icon=":material/info:", key="req"):
             requirements()
         cols = st.columns(2)
@@ -873,19 +897,17 @@ with right:
                         ss.photos[view], ss.seq[view], ss.accepted[view] = f.getvalue(), ss.counter, False
                         ss.nonce[view] += 1
                         st.rerun()
-        b1, b2 = st.columns(2)
-        b1.button(stages[0], icon=":material/arrow_back:", key="back0", on_click=go, args=(0,))
-        b2.button("Review results", icon=":material/arrow_forward:", icon_position="right", key="to2", type="primary",
-                  disabled=not (photo_ready and form_ready), on_click=go, args=(2,))
-        if not form_ready:
-            st.markdown("<div class='hint' style='color:var(--warn)'>Finish the " + stages[0].lower() + " step before reviewing results.</div>", unsafe_allow_html=True)
+        st.button("Continue to garage report", icon=":material/arrow_forward:", icon_position="right", key="to1", type="primary",
+                  disabled=not photo_ready, on_click=go, args=(1,))
+        if not photo_ready:
+            st.markdown(f"<div class='hint' style='color:var(--warn)'>{len(good)} of 4 photos accepted. Add the remaining angles to continue.</div>", unsafe_allow_html=True)
 
     else:
         head(3 if towed else 2, "Inspection results", "Compare the garage report against the photo findings." if towed else "Your declared damage, checked against the model.")
         if not ((photo_ready and form_ready) if towed else form_ready):
-            target = 0 if not form_ready else 1
-            msg = (("Upload a valid garage report." if towed else (minor_problems() or [""])[0]) if not form_ready
-                   else f"Accept all four photos ({len(good)} of 4 ready).")
+            target = 0 if (not towed or not photo_ready) else 1
+            msg = ((f"Accept all four photos ({len(good)} of 4 ready)." if not photo_ready else "Upload a valid garage report.") if towed
+                   else (minor_problems() or [""])[0])
             with st.container(key="card_gate"):
                 st.markdown(f"**Complete your inspection first**  \n<span class='hint'>{msg}</span>", unsafe_allow_html=True)
                 st.button("Go to " + stages[target].lower(), key="gate", on_click=go, args=(target,))
