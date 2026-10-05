@@ -67,7 +67,7 @@ def hamming(a, b):
     return bin(a ^ b).count("1")
 
 
-def check_single(data: bytes, min_short=480, min_long=640):
+def check_single(data: bytes, min_short=100, min_long=100):
     """Validity + quality checks on one photo. 'blocking' must be fixed by a retake;
     'soft' can be overridden by the user."""
     blocking, soft = [], []
