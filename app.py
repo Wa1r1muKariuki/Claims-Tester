@@ -177,7 +177,8 @@ def set_view(v):
 
 with st.container(key="tabbar"):
     _tc = st.columns([1, 1, 4])
-    for _c, (_id, _label, _icon) in zip(_tc, [("Client", "Client claim", ":material/person:"), ("Insurance", "Insurance review", ":material/apartment:")]):
+    _new = sum(c["status"] == "New" for c in ss.get("claims", []))
+    for _c, (_id, _label, _icon) in zip(_tc, [("Client", "Client claim", ":material/person:"), ("Insurance", f"Insurance review ({_new})" if _new else "Insurance review", ":material/apartment:")]):
         _c.button(_label, icon=_icon, key=f"{'vtabon' if ss.view == _id else 'vtab'}_{_id.lower()}", on_click=set_view, args=(_id,))
 
 
@@ -766,6 +767,83 @@ def head(n, title, sub):
                 unsafe_allow_html=True)
 
 
+# ---------------- client claims (submitted on the Client tab, same session) ----------------
+def _claim(cid):
+    return next((x for x in ss.get("claims", []) if x["id"] == cid), None)
+
+
+def claim_open(cid):
+    """Not towed: load the client's items + photos into the inspection and run the existing model checks."""
+    c = _claim(cid)
+    if not c:
+        return
+    ss.towed_ui = ss._prev_towed = "Not towed"
+    ss.mn_inst, types, skipped = {}, [], 0
+    for it in c["items"]:
+        t = norm_other(it["detail"])
+        if t is None or not it["data"]:
+            skipped += 1
+            continue
+        inst = new_inst(it["data"], [it["panel"]])
+        run_check(t, inst)
+        ss.mn_inst.setdefault(t, []).append(inst)
+        if t not in types:
+            types.append(t)
+    ss.mn_types = [tid for tid, _ in DTYPES if tid in types]
+    ss.pills_types = [DLABEL[t] for t in ss.mn_types]
+    ss.flags.update(none_minor=False, confirmed=False)
+    ss["cb_confirmed"] = False
+    c["status"] = "In review"
+    ss.step = 0
+    st.toast(f"Loaded {c['id']} into the inspection." + (f" {skipped} item(s) could not be matched to a detector." if skipped else ""))
+
+
+def claim_grade(cid):
+    """Towed: grade each part photo (severity -> Repair/Replace) and compare with what the client chose."""
+    c = _claim(cid)
+    if not c:
+        return
+    rows = []
+    for it in c["items"]:
+        try:
+            r = api.severity(it["data"]) if LIVE else L.mock_severity(it["data"])
+        except Exception as ex:
+            r = {"ok": False, "note": str(ex)}
+        verdict = str(r.get("verdict") or "").title() if r.get("ok", True) else ""
+        sev = r.get("composite")
+        status = "Matched" if verdict and verdict == it["detail"] else "Needs review"
+        reason = (r.get("note") or "The model could not grade this photo.") if not verdict else (
+            "The model agrees with the client." if status == "Matched" else f"Client chose {it['detail'].lower()}, the model suggests {verdict.lower()}.")
+        rows.append({"panel": it["panel"], "client": it["detail"], "verdict": verdict or "—", "severity": "—" if sev is None else round(sev), "status": status, "reason": reason})
+    c["analysis"], c["status"] = rows, "Reviewed"
+
+
+def claims_view():
+    claims = ss.get("claims", [])
+    st.markdown("<div class='kick'>Inbox</div><div class='stitle'>Client claims</div>"
+                "<div class='sub'>Claims submitted on the Client tab in this session. A refresh clears them.</div>", unsafe_allow_html=True)
+    if not claims:
+        st.markdown("<div class='mc-empty'>No client claims yet. Submit one on the Client tab and it will appear here.</div>", unsafe_allow_html=True)
+        return
+    for c in reversed(claims):
+        tow = c["mode"] == "Towed"
+        with st.container(key=f"card_claim_{c['id']}"):
+            col = {"New": "var(--accent)", "In review": "var(--warn)", "Reviewed": "var(--ok)"}[c["status"]]
+            st.markdown(f"<div class='ph-head'><span class='badge'>{e(c['id'][2:])}</span><div><b>{e(c['id'])} · {e(c['mode'])}</b><br>"
+                        f"<span class='hint'>{len(c['items'])} item(s)</span></div><span class='tick' style='color:{col}'>{e(c['status'])}</span></div>", unsafe_allow_html=True)
+            thumbs = st.columns(min(4, len(c["items"])) or 1)
+            for i, it in enumerate(c["items"]):
+                with thumbs[i % len(thumbs)]:
+                    st.image(it["data"], caption=f"{it['panel']} · {it['detail']}", use_container_width=True)
+            if tow:
+                st.button("Run severity check" if not c["analysis"] else "Run again", icon=":material/fact_check:", key=f"cg_{c['id']}", type="primary", on_click=claim_grade, args=(c["id"],))
+                if c["analysis"]:
+                    live_table("Client choice vs model", ["Part", "Client chose", "Model", "Severity", "Status", "Reason"],
+                               [[e(r["panel"]), e(r["client"]), e(r["verdict"]), e(r["severity"]), status_cell(r["status"]), e(r["reason"])] for r in c["analysis"]])
+            else:
+                st.button("Open in inspection", icon=":material/open_in_new:", key=f"co_{c['id']}", type="primary", on_click=claim_open, args=(c["id"],))
+
+
 # ---------------- derived state ----------------
 towed = ss.towed_ui == "Towed"
 stat = photo_status()
@@ -808,6 +886,8 @@ with left:
     for i, label in enumerate(stages):
         st.button(label, icon=":material/check_circle:" if done[i] else icons[i], key=f"{'navon' if ss.step == i else 'nav'}_{i}",
                   on_click=go, args=(i,))
+    _nc = len(ss.get("claims", []))
+    st.button(f"Client claims ({_nc})", icon=":material/inbox:", key=f"{'navon' if ss.step == -1 else 'nav'}_claims", on_click=go, args=(-1,))
     if towed:
         st.markdown(f"<div class='prog'><span>Photo progress</span><span style='color:var(--accent)'>{len(good)} of 4</span></div>"
                     f"<div class='bar'><i style='width:{len(good) * 25}%'></i></div>"
@@ -827,7 +907,9 @@ with left:
 
 # ---------------- main ----------------
 with right:
-    if not towed and ss.step == 0:
+    if ss.step == -1:
+        claims_view()
+    elif not towed and ss.step == 0:
         minor_step()
     elif towed and ss.step == 1:
         head(2, "Garage report", "Attach the garage report and, optionally, its parts estimate.")
