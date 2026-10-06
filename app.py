@@ -408,8 +408,8 @@ if ss.view == "Client":
 # ---------------- insurance review ----------------
 claims = ss.claims
 count = lambda s: sum(c["status"] == s for c in claims)
-client.hero("Insurance review", "Client", "claims", "Review what the client declared, then run the inspection to check the photos against the model. Matches are approved; the rest wait for you.",
-            chips=[f"{count('New')} awaiting inspection", f"{count('Needs review')} need review", "Connected to the detection API" if LIVE else "Demo workspace"])
+client.hero("Insurance review","Review", "what the client declared",
+            chips=[f"{count('New')} awaiting inspection", f"{count('Needs review')} need review"])
 _n = max(len(claims), 1)
 kpi_grid([("Awaiting inspection", count("New"), "info", "clock", count("New") / _n), ("Needs review", count("Needs review"), "warn", "alert", count("Needs review") / _n),
           ("Approved", count("Approved"), "ok", "check", count("Approved") / _n), ("Rejected", count("Rejected"), "bad", "x", count("Rejected") / _n)])
