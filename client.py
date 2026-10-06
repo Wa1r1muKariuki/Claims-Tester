@@ -9,7 +9,7 @@ import html
 import os
 
 import streamlit as st
-from PIL import Image, ImageOps
+from PIL import Image, ImageChops, ImageOps
 
 import logic as L
 
@@ -27,6 +27,11 @@ def _info(damage):
 @st.cache_data(show_spinner=False)
 def _example(path, mtime):   # mtime in the key: a replaced photo is picked up without clearing the cache
     im = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
+    # some example files carry a blank page margin; trim near-white borders so every example fills its frame
+    ink = ImageChops.difference(im, Image.new("RGB", im.size, (255, 255, 255))).convert("L").point(lambda v: 255 if v > 24 else 0)
+    box = ink.getbbox()
+    if box and (box[2] - box[0]) * (box[3] - box[1]) < 0.95 * im.width * im.height:
+        im = im.crop(box)
     im.thumbnail((900, 900))
     return im
 
