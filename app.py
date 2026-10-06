@@ -408,7 +408,8 @@ if ss.view == "Client":
 # ---------------- insurance review ----------------
 claims = ss.claims
 count = lambda s: sum(c["status"] == s for c in claims)
-client.hero("Insurance review","Review", "what the client declared",
+client.hero("Insurance review", "Review", "what the client declared",
+            sub="Run the model on each claim's photos, then approve or reject the ones that need a decision.",
             chips=[f"{count('New')} awaiting inspection", f"{count('Needs review')} need review"])
 _n = max(len(claims), 1)
 kpi_grid([("Awaiting inspection", count("New"), "info", "clock", count("New") / _n), ("Needs review", count("Needs review"), "warn", "alert", count("Needs review") / _n),
@@ -436,7 +437,7 @@ def verdict_lead(hd):
 
 
 def clean_summary(x):
-    """Drop the backend's 'NEEDS REVIEW → human adjuster:' prefix; the banner title already says it."""
+    """Drop the backend's 'NEEDS REVIEW →' prefix; the banner title already says it."""
     return re.sub(r"^\s*needs review\s*(→|->)?\s*human adjuster\s*:?\s*", "", str(x or ""), flags=re.I).strip()
 
 
