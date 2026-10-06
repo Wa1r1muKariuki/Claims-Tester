@@ -181,6 +181,12 @@ hr{border-color:var(--border)!important;}
 .kpi .meter{position:absolute;left:0;right:0;bottom:0;height:3px;background:color-mix(in srgb,var(--tone) 14%,transparent);}
 .kpi .meter i{display:block;height:100%;width:var(--w,0%);background:var(--tone);border-radius:0 4px 4px 0;transition:width .5s;}
 .kpi.zero .num{color:var(--mfg);} .kpi.zero .ico{background:var(--card2);box-shadow:none;} .kpi.zero .ico svg{stroke:var(--mfg);}
+.kpi.sel{border-color:var(--tone);box-shadow:0 0 0 2px var(--tone);}
+[class*="st-key-kpitile_"]{position:relative;}
+[class*="st-key-kpitile_"]:hover .kpi{transform:translateY(-2px);border-color:var(--tone);box-shadow:0 16px 30px -16px var(--tone);}
+[class*="st-key-kpitile_"] [data-testid="stElementContainer"]:has(button){position:absolute;inset:0;z-index:3;margin:0;}
+[class*="st-key-kpitile_"] .stButton{height:100%;}
+[class*="st-key-kpitile_"] .stButton>button{height:100%;width:100%;opacity:0;cursor:pointer;}
 .kpi.t-info{--tone:var(--p1);} .kpi.t-warn{--tone:var(--warn);} .kpi.t-ok{--tone:var(--ok);} .kpi.t-bad{--tone:var(--bad);}
 </style>
 """
@@ -268,16 +274,18 @@ ICONS = {
 }
 
 
+def kpi_html(label, value, tone, icon, share, sel=False):
+    """One status tile. tone: info|warn|ok|bad. share 0-1 draws a meter along the bottom, or None. sel marks the active filter."""
+    zero = isinstance(value, int) and value == 0
+    meter = f"<div class='meter'><i style='--w:{round(100 * share)}%'></i></div>" if share is not None else ""
+    return (f"<div class='kpi t-{tone}{' zero' if zero else ''}{' sel' if sel else ''}'><div class='ico'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' "
+            f"stroke-linecap='round' stroke-linejoin='round'>{ICONS[icon]}</svg></div><div><div class='num{' sm' if len(str(value)) > 4 else ''}'>{e(value)}</div>"
+            f"<div class='lbl'>{e(label)}</div></div>{meter}</div>")
+
+
 def kpi_grid(tiles):
-    """tiles: (label, value, tone, icon, share). tone: info|warn|ok|bad. share 0-1 draws a meter along the bottom, or None."""
-    out = []
-    for label, value, tone, icon, share in tiles:
-        zero = isinstance(value, int) and value == 0
-        meter = f"<div class='meter'><i style='--w:{round(100 * share)}%'></i></div>" if share is not None else ""
-        out.append(f"<div class='kpi t-{tone}{' zero' if zero else ''}'><div class='ico'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' "
-                   f"stroke-linecap='round' stroke-linejoin='round'>{ICONS[icon]}</svg></div><div><div class='num{' sm' if len(str(value)) > 4 else ''}'>{e(value)}</div>"
-                   f"<div class='lbl'>{e(label)}</div></div>{meter}</div>")
-    st.markdown("<div class='kpis'>" + "".join(out) + "</div>", unsafe_allow_html=True)
+    """tiles: (label, value, tone, icon, share)."""
+    st.markdown("<div class='kpis'>" + "".join(kpi_html(*t) for t in tiles) + "</div>", unsafe_allow_html=True)
 
 
 def pct(x):
@@ -369,15 +377,25 @@ def grade_item(it):
     return row
 
 
+def towed_hidden(rows):
+    """Hidden-damage assessment for a towed claim, from the graded severities. Returns (assessment or None, note or None)."""
+    if LIVE:
+        return None, "The backend has no hidden-damage assessment for towed claims connected yet, so none was run."
+    return L.mock_hidden_damage([r["severity"] for r in rows]), None
+
+
 def analyse_towed(c):
     rows = [grade_item(it) for it in c["items"]]
     needs = sum(r["status"] != "Matched" for r in rows)
+    hd, note = towed_hidden(rows)
+    flag = bool((hd or {}).get("hidden_damage_likely"))
     return {"kind": "towed", "outcome": "needs_review" if needs else "matched",
             "summary": f"{needs} of {len(rows)} item(s) need review: the model disagrees or could not grade the photo." if needs
             else "The model agrees with the client on every item.",
             "stats": [("Items checked", len(rows), "info", "search", None), ("Needs review", needs, "warn" if needs else "ok", "alert", None),
-                      ("Model agrees", len(rows) - needs, "ok", "check", None)],
-            "rows": rows, "images": [{"caption": f"{r['panel']} · {r['client']}", "image": r["image"], "note": f"Model says {r['model'].lower()}" if r["model"] != "—" else ""} for r in rows]}
+                      ("Model agrees", len(rows) - needs, "ok", "check", None),
+                      ("Hidden damage likely", "Yes" if flag else ("No" if hd is not None else "—"), "bad" if flag else ("ok" if hd is not None else "info"), "eye", None)],
+            "rows": rows, "hidden_flag": flag, "hidden": hd, "hidden_note": note, "images": [{"caption": f"{r['panel']} · {r['client']}", "image": r["image"], "note": f"Model says {r['model'].lower()}" if r["model"] != "—" else ""} for r in rows]}
 
 
 def run_inspection(cid):
@@ -397,6 +415,19 @@ def run_inspection(cid):
 def decide(cid, status):
     c = next(x for x in ss.claims if x["id"] == cid)
     c["status"], c["decided_by"] = status, "Adjuster"
+
+
+def autorun_pending():
+    """Inspect every submitted claim that hasn't been inspected yet. 'tried' is set only once a run finishes, so a run cut short
+    by a tab switch is retried on the next render, while a run that failed isn't repeated on every rerun (the adjuster can re-run it)."""
+    for c in ss.claims:
+        if c["analysis"] is None and c["status"] == "New" and not c.get("tried"):
+            run_inspection(c["id"])
+            c["tried"] = True
+
+
+def set_filter(k):
+    ss.status_filter = None if ss.get("status_filter") == k else k
 
 
 def set_view(v):
@@ -422,17 +453,24 @@ with st.container(key="theme_toggle"):
 
 if ss.view == "Client":
     client.render(panels=PANEL_OPTIONS, part_ids=PID, damages=[lab for _, lab in DTYPES], live=LIVE)
+    autorun_pending()   # a submitted claim is inspected straight away, silently; the client never sees the findings
     st.stop()
 
 # ---------------- insurance review ----------------
 claims = ss.claims
+if any(c["analysis"] is None and c["status"] == "New" and not c.get("tried") for c in claims):
+    with st.spinner("Inspecting new claims…"):
+        autorun_pending()
 count = lambda s: sum(c["status"] == s for c in claims)
 client.hero("Insurance review", "Review", "what the client declared",
-            sub="Run the model on each claim's photos, then approve or reject the ones that need a decision.",
-            chips=[f"{count('New')} awaiting inspection", f"{count('Needs review')} need review"])
+            sub="New claims are inspected automatically. Approve or reject the ones that need a decision.")
 _n = max(len(claims), 1)
-kpi_grid([("Awaiting inspection", count("New"), "info", "clock", count("New") / _n), ("Needs review", count("Needs review"), "warn", "alert", count("Needs review") / _n),
-          ("Approved", count("Approved"), "ok", "check", count("Approved") / _n), ("Rejected", count("Rejected"), "bad", "x", count("Rejected") / _n)])
+_tiles = [("New", "Awaiting inspection", "info", "clock"), ("Needs review", "Needs review", "warn", "alert"),
+          ("Approved", "Approved", "ok", "check"), ("Rejected", "Rejected", "bad", "x")]
+for _col, (_k, _lab, _tone, _ico) in zip(st.columns(4, gap="small"), _tiles):
+    with _col, st.container(key=f"kpitile_{_k.replace(' ', '').lower()}"):   # the invisible button over the tile makes it a filter
+        st.markdown(kpi_html(_lab, count(_k), _tone, _ico, count(_k) / _n, sel=ss.get("status_filter") == _k), unsafe_allow_html=True)
+        st.button(_lab, key=f"kpibtn_{_k.replace(' ', '').lower()}", on_click=set_filter, args=(_k,))
 if not claims:
     st.markdown("<div class='mc-empty'>No claims yet. Submit one on the Client tab and it will appear here, waiting for inspection.</div>", unsafe_allow_html=True)
     st.stop()
@@ -460,6 +498,21 @@ def clean_summary(x):
     return re.sub(r"^\s*needs review\s*(→|->)?\s*human adjuster\s*:?\s*", "", str(x or ""), flags=re.I).strip()
 
 
+def render_hidden(cid, a):
+    hd, note = a.get("hidden"), a.get("hidden_note")
+    with st.container(key=f"card_hidden_{cid}"):
+        st.markdown("**Hidden damage assessment**")
+        if hd:
+            likely = bool(a["hidden_flag"])
+            st.markdown(f"<div class='note {'warn' if likely else 'ok'}'><b>{'Hidden damage likely found' if likely else 'No hidden damage likely'}</b> · {e(verdict_lead(hd))}{e(hd.get('summary') or '')}</div>", unsafe_allow_html=True)
+            with st.expander("Details"):
+                st.json(hd)
+        else:
+            st.markdown("<div class='note'>Not assessed. No hidden-damage assessment came back for this claim.</div>", unsafe_allow_html=True)
+        if note:
+            st.caption(note)
+
+
 def render_results(cid, a):
     bad = "review" in a["outcome"]
     st.markdown(f"<div class='banner {'bad' if bad else 'ok'}'><div><h3>{e(pretty(a['outcome']))}</h3><p>{e(clean_summary(a['summary']))}</p></div></div>", unsafe_allow_html=True)
@@ -468,24 +521,14 @@ def render_results(cid, a):
         live_table("Declared damage vs model", ["Parts", "Damage", "Confidence", "Severity", "Fix", "Status", "Reason"],
                    [[e(", ".join(r["parts"]) or "—"), e(r["damage"]), pct(r["conf"]), e(round(r["severity"]) if r["severity"] is not None else "—"),
                      e(r["fix"] or "—"), status_cell(r["status"]), e(r["reason"])] for r in a["rows"]])
-        hd, note = a.get("hidden"), a.get("hidden_note")
-        with st.container(key=f"card_hidden_{cid}"):
-            st.markdown("**Hidden damage assessment**")
-            if hd:
-                likely = bool(a["hidden_flag"])
-                st.markdown(f"<div class='note {'warn' if likely else 'ok'}'><b>{'Hidden damage likely found' if likely else 'No hidden damage likely'}</b> · {e(verdict_lead(hd))}{e(hd.get('summary') or '')}</div>", unsafe_allow_html=True)
-                with st.expander("Details"):
-                    st.json(hd)
-            else:
-                st.markdown("<div class='note'>Not assessed. No hidden-damage assessment came back for this claim.</div>", unsafe_allow_html=True)
-            if note:
-                st.caption(note)
+        render_hidden(cid, a)
         if a["estimate"]:
             live_table("Repair estimate", ["Part", "Severity", "Fix"],
                        [[e(r.get("part_name") or r.get("part_id")), e(round(r.get("severity") or 0)), e(pretty(r.get("fix_type")))] for r in a["estimate"]])
     else:
         live_table("Client choice vs model", ["Part", "Client chose", "Model says", "Severity", "Status", "Reason"],
                    [[e(r["panel"]), e(r["client"]), e(r["model"]), e("—" if r["severity"] is None else f"{r['severity']}/100"), status_cell(r["status"]), e(r["reason"])] for r in a["rows"]])
+        render_hidden(cid, a)
     imgs = [x for x in a["images"] if x["image"]]
     if imgs:
         st.markdown("### Photo findings")
@@ -532,7 +575,13 @@ def render_claim(c):
 
 
 OPEN = ("New", "Needs review")
-for c in sorted(reversed(claims), key=lambda x: x["status"] not in OPEN):   # claims waiting for action first
+_f = ss.get("status_filter")
+shown = [c for c in claims if not _f or c["status"] == _f]
+if _f:
+    st.caption(f"Showing {len(shown)} {LABEL.get(_f, _f).lower()} claim{'s' if len(shown) != 1 else ''}. Click the tile again to show all.")
+    if not shown:
+        st.markdown("<div class='mc-empty'>No claims with this status.</div>", unsafe_allow_html=True)
+for c in sorted(reversed(shown), key=lambda x: x["status"] not in OPEN):   # claims waiting for action first
     # every claim can be minimised; the ones waiting for action start open
     with st.expander(f"{c['id']} · {c['mode']} · {len(c['items'])} item(s) · {LABEL.get(c['status'], c['status'])}", expanded=c["status"] in OPEN or ss.get("just_ran") == c["id"]):
         render_claim(c)
