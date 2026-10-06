@@ -107,7 +107,12 @@ def _accept(m, iid):
 
 
 def _submit(m):
-    ss.cl["done"][m] = len(ss.cl["items"][m])
+    """Save the claim in the session so the Insurance tab can list and open it."""
+    claims = ss.setdefault("claims", [])
+    cid = f"C-{len(claims) + 1:03d}"
+    items = [{k: i.get(k) for k in ("panel", "part_id", "detail", "data")} for i in ss.cl["items"][m]]
+    claims.append({"id": cid, "mode": m, "items": items, "status": "New", "analysis": None})
+    ss.cl["done"][m] = {"id": cid, "count": len(items)}
 
 
 def _reset(m):
@@ -222,9 +227,10 @@ def _photo_step(m, items):
         st.markdown("<div class='hint' style='color:var(--warn)'>Add an accepted photo for every item to submit.</div>", unsafe_allow_html=True)
 
 
-def _success(m, count):
+def _success(m, done):
+    count = done["count"]
     st.markdown(f"<div class='banner ok'><div><h3>Success: your claim was submitted</h3>"
-                f"<p>Thank you. We received {count} item{'s' if count != 1 else ''} with photos. Your insurer will review them and contact you.</p></div></div>",
+                f"<p>Thank you. We received {count} item{'s' if count != 1 else ''} with photos. Your reference is <b>{e(done['id'])}</b>. Your insurer will review them and contact you.</p></div></div>",
                 unsafe_allow_html=True)
     st.button("Start a new claim", icon=":material/add:", key="cl_new", type="primary", on_click=_reset, args=(m,))
 
