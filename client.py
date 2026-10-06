@@ -4,7 +4,9 @@ Not towed: pick the damaged part + damage type, then attach one photo per item.
 Towed:     list the parts and mark each Repair or Replace, then attach one photo per part.
 The client never sees model detections; those stay on the insurance tab.
 """
+import base64
 import html
+import os
 
 import streamlit as st
 
@@ -33,6 +35,27 @@ def _check(data):
 
 def e(x):
     return html.escape(str(x))
+
+
+HERO_CSS = """<style>
+.hero.sm{min-height:0;margin-bottom:1.4rem;}
+.hero.sm .hero-in{padding:1.6rem 1.5rem 2.4rem;}
+.hero.sm .txt{padding-top:0;}
+.hero.sm h1{font-size:1.8rem;}
+.hero.sm p{margin:.5rem 0 0;font-size:.9rem;color:rgba(255,255,255,.85);}
+</style>"""
+
+
+@st.cache_data(show_spinner=False)
+def _hero_uri():
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "hero.jpg")
+    return "data:image/jpeg;base64," + base64.b64encode(open(p, "rb").read()).decode() if os.path.exists(p) else ""
+
+
+def _hero(title, em, sub):
+    img = f"<img src='{_hero_uri()}' alt=''>" if _hero_uri() else ""
+    st.markdown(HERO_CSS + f"<div class='hero sm'>{img}<div class='shade'></div><div class='grid'></div><div class='hero-in'><div class='txt'>"
+                f"<div class='kick'>Client claim</div><h1>{e(title)}<br><em>{e(em)}</em></h1><p>{e(sub)}</p></div></div></div>", unsafe_allow_html=True)
 
 
 # ---------------- callbacks ----------------
@@ -108,9 +131,7 @@ def _statuses(items):
 def _head(step, labels):
     pills = " <span class='hint'>→</span> ".join(
         f"<span class='tag' style='{'' if i == step else 'opacity:.55'}'>{i + 1} · {e(l)}</span>" for i, l in enumerate(labels))
-    st.markdown(f"<div class='kick'>Client claim</div><div class='stitle'>Report your vehicle damage</div>"
-                f"<div class='sub'>Tell us what was damaged and attach a photo of each item.</div><div style='margin-bottom:1rem'>{pills}</div>",
-                unsafe_allow_html=True)
+    st.markdown(f"<div style='margin-bottom:1rem'>{pills}</div>", unsafe_allow_html=True)
 
 
 # ---------------- steps ----------------
@@ -193,7 +214,6 @@ def _photo_step(m, items):
 
 
 def _success(m, count):
-    st.markdown(f"<div class='kick'>Client claim</div><div class='stitle'>Claim submitted</div>", unsafe_allow_html=True)
     st.markdown(f"<div class='banner ok'><div><h3>Success: your claim was submitted</h3>"
                 f"<p>Thank you. We received {count} item{'s' if count != 1 else ''} with photos. Your insurer will review them and contact you.</p></div></div>",
                 unsafe_allow_html=True)
@@ -206,7 +226,7 @@ def render():
     m = ss.cl["mode"]
     towed = m == "Towed"
     items = ss.cl["items"][m]
-    st.markdown("<div style='height:1.2rem'></div>", unsafe_allow_html=True)
+    _hero("Report your", "vehicle damage", "Tell us what was damaged and attach a photo of each item.")
     left, right = st.columns([1, 3.6], gap="large")
     with left:
         st.markdown("<div class='side-h'>Vehicle status</div>", unsafe_allow_html=True)
