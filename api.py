@@ -81,6 +81,11 @@ def detect(data, models=None, threshold=None, include_image=True):
     return _req("POST", "/detectors/detect", params=params, files={"file": _file(data)})
 
 
+def severity(data):
+    """POST /severity/grade: composite severity + Replace/Repair verdict for one photo."""
+    return _req("POST", "/severity/grade", timeout=120, files={"file": _file(data)})
+
+
 # ---- journey 1 (not towed): one declared damage + its photo, then finalize ----
 def minor_check(damage_type, data, threshold=None, include_image=True):
     """damage_type is a detector key (e.g. 'dent'). threshold=None -> each detector's production threshold."""
