@@ -199,7 +199,7 @@ def test_towed_photos_come_before_garage_report():
     at = towed(fresh())
     at.run()
     assert "Capture the vehicle" in text(at)
-    assert [b.label for b in at.button if b.key and b.key.startswith(("nav_", "navon_"))] == ["Photos", "Garage report", "Results"]
+    assert [b.label for b in at.button if b.key and b.key.startswith(("nav_", "navon_")) and not b.key.endswith("_claims")] == ["Photos", "Garage report", "Results"]
     assert at.button(key="to1").disabled                      # no photos yet
     at.session_state["step"] = 1; at.run()
     assert "Garage report" in text(at) and "Capture the vehicle" not in text(at)
@@ -379,3 +379,61 @@ if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
             f(); print("PASS", n)
+
+
+# ---------------- client -> insurance link (same session) ----------------
+def _client_with_items(at, mode, items):
+    """items: [(panel, detail)], each gets a different photo; then submit on the Client tab."""
+    at.session_state["view"] = "Client"; at.run()
+    if mode == "Towed":
+        at.session_state["cl"]["mode"] = "Towed"; at.run()
+    for n, (panel, detail) in enumerate(items):
+        at.selectbox(key="cl_part").set_value(panel)
+        if mode == "Towed":
+            at.segmented_control(key="cl_act").set_value(detail)
+        else:
+            at.selectbox(key="cl_dmg").set_value(detail)
+        at.button(key="cl_add").click().run()
+    cl = at.session_state["cl"]
+    for n, it in enumerate(cl["items"][mode]):
+        it["data"] = scene(100 + n); cl["pseq"] += 1; it["pseq"] = cl["pseq"]
+    at.button(key="cl_to_photos").click().run()
+    assert not at.button(key="cl_submit").disabled
+    at.button(key="cl_submit").click().run()
+    assert not at.exception and "C-001" in text(at)
+    return at
+
+
+def test_client_claim_reaches_insurance_and_prefills_inspection():
+    at = fresh()
+    _client_with_items(at, "Not towed", [("Hood", "Dent"), ("Roof", "Scratch")])
+    assert len(at.session_state["claims"]) == 1
+    at.button(key="vtab_insurance").click().run()
+    assert "Insurance review (1)" in [b.label for b in at.button]
+    at.button(key="nav_claims").click().run()
+    assert not at.exception and "Client claims" in text(at)
+    at.button(key="co_C-001").click().run()
+    assert not at.exception
+    assert at.session_state["step"] == 0
+    assert set(at.session_state["mn_types"]) == {"Dent", "Scratch"}
+    inst = at.session_state["mn_inst"]["Dent"][0]
+    assert inst["parts"] == ["Hood"] and inst["chk"] and not inst["err"]
+    assert at.session_state["claims"][0]["status"] == "In review"
+
+
+def test_towed_client_claim_is_graded_on_insurance_side():
+    at = fresh()
+    _client_with_items(at, "Towed", [("Hood", "Replace"), ("Roof", "Repair")])
+    at.button(key="vtab_insurance").click().run()
+    at.button(key="nav_claims").click().run()
+    at.button(key="cg_C-001").click().run()
+    assert not at.exception
+    rows = at.session_state["claims"][0]["analysis"]
+    assert len(rows) == 2 and all(r["status"] in ("Matched", "Needs review") for r in rows)
+    assert "Client choice vs model" in text(at)
+
+
+def test_empty_claims_inbox():
+    at = fresh()
+    at.session_state["view"] = "Insurance"; at.session_state["step"] = -1; at.run()
+    assert not at.exception and "No client claims yet" in text(at)
