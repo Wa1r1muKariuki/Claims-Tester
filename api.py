@@ -3,7 +3,6 @@
 Configure with env vars / Streamlit secrets:  API_BASE_URL (required), API_KEY (optional bearer token).
 """
 import base64
-import json
 import os
 
 import requests
@@ -66,21 +65,6 @@ def parts():
     return _req("GET", "/hidden-damage/parts", timeout=20)
 
 
-# ---- per-photo ----
-def quality(data):
-    return _req("POST", "/quality/check", timeout=30, files={"file": _file(data)})
-
-
-def detect(data, models=None, threshold=None, include_image=True):
-    """All detectors (or the comma-separated `models`) on one image. threshold=None -> production thresholds."""
-    params = {"include_image": _b(include_image)}
-    if models:
-        params["models"] = models
-    if threshold is not None:
-        params["threshold"] = threshold
-    return _req("POST", "/detectors/detect", params=params, files={"file": _file(data)})
-
-
 def severity(data):
     """POST /severity/grade: composite severity + Replace/Repair verdict for one photo."""
     return _req("POST", "/severity/grade", timeout=120, files={"file": _file(data)})
@@ -101,19 +85,8 @@ def minor_item(chk, part_id, damage_type):
     score = sev.get("composite")
     score = min(100.0, max(0.0, float(score))) if score is not None else 0.0
     return {"damage_type": damage_type, "confirmed": bool(chk.get("confirmed")), "max_conf": chk.get("max_conf"),
-            "severity": score, "severity_source": "glm" if sev.get("ok") else "default", "part_ids": [part_id]}
+            "severity": score, "severity_source": "glm" if sev.get("ok") else "manual", "part_ids": [part_id]}
 
 
 def minor_finalize(items):
     return _req("POST", "/journeys/minor/finalize", json={"items": items})
-
-
-# ---- journey 2 (towed) ----
-def major(photos, garage_text, estimate=None, run_glm=True, include_images=True, threshold=None):
-    """photos: {'Front': bytes, ...}; estimate: [{'part_id': 12, 'severity': 70}, ...]"""
-    files = {v.lower(): _file(d, f"{v.lower()}.jpg") for v, d in photos.items()}
-    form = {"garage_text": garage_text or "", "estimate": json.dumps(estimate or []), "run_glm": _b(run_glm),
-            "include_images": _b(include_images)}
-    if threshold is not None:
-        form["threshold"] = str(threshold)
-    return _req("POST", "/journeys/major", data=form, files=files, timeout=300)
