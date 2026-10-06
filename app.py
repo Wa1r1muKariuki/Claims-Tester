@@ -1,5 +1,6 @@
 import html
 import os
+import re
 
 import streamlit as st
 
@@ -9,7 +10,7 @@ import logic as L
 
 st.set_page_config(page_title="Car Damage Check | Vehicle inspection", page_icon="🔍", layout="wide")
 try:  # backend settings from .streamlit/secrets.toml or Streamlit Cloud secrets
-    for _k in ("API_BASE_URL", "API_KEY", "RUN_GLM"):
+    for _k in ("API_BASE_URL", "API_KEY"):
         if _k in st.secrets:
             os.environ.setdefault(_k, str(st.secrets[_k]))
 except Exception:
@@ -123,7 +124,7 @@ hr{border-color:var(--border)!important;}
 .banner{display:flex;gap:.8rem;border-radius:16px;padding:1.1rem 1.3rem;margin:1rem 0;}
 .banner.bad{background:var(--warnsoft);color:var(--warn);} .banner.ok{background:var(--oksoft);color:var(--ok);}
 .banner h3{margin:0;color:inherit!important;font-size:1.15rem;} .banner p{margin:.2rem 0 0;font-size:.85rem;color:inherit!important;}
-.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem;margin-bottom:1.2rem;}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.75rem;margin-bottom:1.2rem;}
 .stat{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:.9rem 1rem;box-shadow:var(--shadow);} .stat b{font-family:'Manrope';font-size:1.6rem;display:block;} .stat span{font-size:.75rem;color:var(--mfg);}
 .stat b.sm{font-size:.95rem;padding:.55rem 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .tbl{background:var(--card);border:1px solid var(--border);border-radius:16px;overflow-x:auto;margin-bottom:.6rem;box-shadow:var(--shadow);}
@@ -212,38 +213,79 @@ def pretty(x):
     return s[:1].upper() + s[1:]
 
 
-# ---------------- claim analysis ----------------
-# Not towed: the detector for the client's damage type must confirm it in the photo.
+# ---------------- display helpers ----------------
+def pct(x):
+    return "—" if x is None else f"{float(x):.0%}"
+
+
+def live_table(title, heads, rows):
+    th = "".join(f"<th>{e(h)}</th>" for h in heads)
+    body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows)
+    st.markdown(f"<div class='tbl'><h3>{e(title)}</h3><table><thead><tr>{th}</tr></thead><tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
+
+
+def status_cell(status):
+    return f"<span class='{'s-NeedsReview' if 'review' in str(status).lower() else 's-Matched'}'>{e(pretty(status))}</span>"
+
+
+# ---------------- claim inspection (runs only when the adjuster clicks "Run inspection") ----------------
+# Not towed: every declared damage is sent to its detector, then the checks are finalized by the backend
+#            (outcome, hidden-damage assessment, repair estimate).
 # Towed:     the severity model's Repair/Replace verdict must equal what the client chose.
-# Every item matched -> claim approved automatically; otherwise it waits for an adjuster.
-def check_item(it):
-    t = norm_other(it["detail"])
-    row = {"panel": it["panel"], "client": it["detail"], "model": "—", "conf": None, "severity": None, "fix": "", "other": [],
-           "image": it["data"], "status": "Needs review", "reason": ""}
-    if t is None:
-        row["reason"] = "No detector exists for this damage type."
-        return row
-    try:
-        r = api.minor_check(t, it["data"], None, True) if LIVE else L.mock_minor_check(t, it["data"], None)
-    except Exception as ex:
-        row["reason"] = str(ex)
-        return row
-    if r.get("available") is False or r.get("error"):
-        row["reason"] = r.get("error") or "This detector is not available."
-        return row
-    sev = r.get("severity") or {}
-    ok = bool(r.get("confirmed"))
-    row.update(model="Confirmed" if ok else "Not found", conf=r.get("max_conf"), fix=pretty(r.get("fix_type")),
-               severity=round(sev["composite"]) if sev.get("ok") and sev.get("composite") is not None else None,
-               other=[DLABEL.get(x, x) for x in dict.fromkeys(norm_other(y) for y in (r.get("other_damage") or [])) if x and x != t],
-               image=api.b64_bytes(r.get("image_jpeg_b64")) or it["data"], status="Matched" if ok else "Needs review",
-               reason="The model found the damage the client reported." if ok else "The model did not find this damage in the photo.")
-    return row
+# Nothing is checked on submit. A claim stays "New" until someone runs the inspection.
+# Every item matched (and no hidden-damage flag) -> approved automatically; otherwise it waits for an adjuster.
+def analyse_minor(c):
+    checked, failed = [], []
+    for it in c["items"]:
+        t, why, r = norm_other(it["detail"]), None, None
+        if t is None:
+            why = "No detector exists for this damage type."
+        elif not it.get("part_id"):
+            why = "This part is not in the backend's parts list."
+        else:
+            try:
+                r = api.minor_check(t, it["data"], None, True) if LIVE else L.mock_minor_check(t, it["data"], None)
+                if r.get("available") is False or r.get("error"):
+                    why = r.get("error") or "This detector is not available."
+            except Exception as ex:
+                why = str(ex)
+        if why:
+            failed.append({"parts": [it["panel"]], "damage": it["detail"], "conf": None, "severity": None, "fix": "",
+                           "status": "needs_review", "reason": why})
+        else:
+            checked.append((it, t, r))
+    # one finalize item per damage type; it counts as confirmed only if every photo of that type confirmed it
+    groups = {}
+    for it, t, r in checked:
+        groups.setdefault(t, []).append((it, r))
+    items = []
+    for t, lst in groups.items():
+        best = max((r for _, r in lst), key=lambda r: r.get("max_conf") or 0)
+        m = api.minor_item(best, lst[0][0]["part_id"], t)
+        m.update(confirmed=all(bool(r.get("confirmed")) for _, r in lst), part_ids=sorted({it["part_id"] for it, _ in lst}),
+                 severity=max(api.minor_item(r, it["part_id"], t)["severity"] for it, r in lst))
+        items.append(m)
+    fin = (api.minor_finalize(items) if LIVE else L.mock_minor_finalize(items)) if items else {}
+    rows = [{"parts": [x for x in (r.get("part_names") or []) if x], "damage": r.get("damage") or pretty(r.get("damage_type")), "conf": r.get("max_conf"),
+             "severity": r.get("severity"), "fix": pretty(r.get("fix_type")), "status": r.get("status"), "reason": r.get("reason") or ""}
+            for r in fin.get("rows") or []] + failed
+    needs = sum("review" in str(r["status"]).lower() for r in rows)
+    images = []
+    for it, t, r in checked:
+        ok = bool(r.get("confirmed"))
+        other = [DLABEL.get(x, x) for x in dict.fromkeys(norm_other(y) for y in (r.get("other_damage") or [])) if x and x != t]
+        images.append({"caption": f"{DLABEL.get(t, t)} · {it['panel']}", "image": api.b64_bytes(r.get("image_jpeg_b64")) or it["data"],
+                       "note": f"{'Confirmed' if ok else 'Not found'} · {pct(r.get('max_conf'))}" + (f" · also sees {', '.join(other)}" if other else "")})
+    flag = bool(fin.get("hidden_damage_flag"))
+    return {"kind": "minor", "outcome": "needs_review" if needs else "matched",
+            "summary": (fin.get("summary") if fin and not failed else None) or (f"{needs} of {len(rows)} declared damage type(s) need review." if needs else "Every declared damage type was confirmed."),
+            "stats": [("Damage types checked", len(rows)), ("Needs review", needs), ("Hidden damage flag", "Yes" if flag else "No")],
+            "rows": rows, "hidden_flag": flag, "hidden": fin.get("hidden_damage"), "hidden_note": fin.get("hidden_damage_note"),
+            "estimate": fin.get("estimate") or [], "images": images}
 
 
 def grade_item(it):
-    row = {"panel": it["panel"], "client": it["detail"], "model": "—", "conf": None, "severity": None, "fix": "", "other": [],
-           "image": it["data"], "status": "Needs review", "reason": ""}
+    row = {"panel": it["panel"], "client": it["detail"], "model": "—", "severity": None, "image": it["data"], "status": "Needs review", "reason": ""}
     try:
         r = api.severity(it["data"]) if LIVE else L.mock_severity(it["data"])
     except Exception as ex:
@@ -259,20 +301,32 @@ def grade_item(it):
     return row
 
 
-def analyse(c):
-    c["analysis"] = [(grade_item if c["mode"] == "Towed" else check_item)(it) for it in c["items"]]
-    auto = bool(c["analysis"]) and all(r["status"] == "Matched" for r in c["analysis"])
+def analyse_towed(c):
+    rows = [grade_item(it) for it in c["items"]]
+    needs = sum(r["status"] != "Matched" for r in rows)
+    return {"kind": "towed", "outcome": "needs_review" if needs else "matched",
+            "summary": f"{needs} of {len(rows)} item(s) need review: the model disagrees or could not grade the photo." if needs
+            else "The model agrees with the client on every item.",
+            "stats": [("Items checked", len(rows)), ("Needs review", needs), ("Model agrees", len(rows) - needs)],
+            "rows": rows, "images": [{"caption": f"{r['panel']} · {r['client']}", "image": r["image"], "note": f"Model says {r['model'].lower()}" if r["model"] != "—" else ""} for r in rows]}
+
+
+def run_inspection(cid):
+    c = next(x for x in ss.claims if x["id"] == cid)
+    c["error"] = None
+    try:
+        a = (analyse_towed if c["mode"] == "Towed" else analyse_minor)(c)
+    except Exception as ex:
+        c["error"] = f"Inspection failed: {ex}"
+        return
+    c["analysis"] = a
+    auto = a["outcome"] == "matched" and bool(a["rows"]) and not a.get("hidden_flag")
     c["status"], c["decided_by"] = ("Approved", "Automatic") if auto else ("Needs review", None)
 
 
 def decide(cid, status):
     c = next(x for x in ss.claims if x["id"] == cid)
     c["status"], c["decided_by"] = status, "Adjuster"
-
-
-def recheck(cid):
-    c = next(x for x in ss.claims if x["id"] == cid)
-    c["analysis"], c["status"], c["decided_by"] = None, "New", None
 
 
 def set_view(v):
@@ -301,58 +355,103 @@ if ss.view == "Client":
     st.stop()
 
 # ---------------- insurance review ----------------
-client.hero("Insurance review", "Client", "claims", "Each claim is checked against the model automatically. Matches are approved; the rest wait for you.")
-_pending = [c for c in ss.claims if c["analysis"] is None]
-if _pending:
-    with st.spinner(f"Checking {len(_pending)} claim(s) with the model…"):
-        for _c in _pending:
-            analyse(_c)
-    st.rerun()
-
+client.hero("Insurance review", "Client", "claims", "Review what the client declared, then run the inspection to check the photos against the model. Matches are approved; the rest wait for you.")
 claims = ss.claims
 count = lambda s: sum(c["status"] == s for c in claims)
 st.markdown("<div class='stats'>" + "".join(f"<div class='stat'><b>{n}</b><span>{t}</span></div>" for t, n in
-            [("Needs review", count("Needs review")), ("Approved", count("Approved")), ("Rejected", count("Rejected"))]) + "</div>", unsafe_allow_html=True)
+            [("Awaiting inspection", count("New")), ("Needs review", count("Needs review")), ("Approved", count("Approved")), ("Rejected", count("Rejected"))]) + "</div>", unsafe_allow_html=True)
 if not claims:
-    st.markdown("<div class='mc-empty'>No claims yet. Submit one on the Client tab and it will appear here, already checked.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='mc-empty'>No claims yet. Submit one on the Client tab and it will appear here, waiting for inspection.</div>", unsafe_allow_html=True)
     st.stop()
 
-COLOR = {"Approved": "var(--ok)", "Needs review": "var(--warn)", "Rejected": "var(--bad)", "New": "var(--mfg)"}
+LABEL = {"New": "Awaiting inspection"}
+
+
+def render_declared(c):
+    """What the client reported, listed before anything is checked."""
+    st.markdown(f"**{'Parts the client wants fixed' if c['mode'] == 'Towed' else 'Damage the client reported'}**")
+    for it in c["items"]:
+        a, b = st.columns([1, 5], vertical_alignment="center")
+        a.image(it["data"], use_container_width=True)
+        b.markdown(f"<div class='item'><b>{e(it['panel'])}</b>&nbsp;·&nbsp;<span style='color:var(--mfg)'>{e(it['detail'])}</span></div>", unsafe_allow_html=True)
+
+
+def clean_summary(x):
+    """Drop the backend's 'NEEDS REVIEW → human adjuster:' prefix; the banner title already says it."""
+    return re.sub(r"^\s*needs review\s*(→|->)?\s*human adjuster\s*:?\s*", "", str(x or ""), flags=re.I).strip()
+
+
+def render_results(cid, a):
+    bad = "review" in a["outcome"]
+    st.markdown(f"<div class='banner {'bad' if bad else 'ok'}'><div><h3>{e(pretty(a['outcome']))}</h3><p>{e(clean_summary(a['summary']))}</p></div></div>", unsafe_allow_html=True)
+    st.markdown("<div class='stats'>" + "".join(f"<div class='stat'><b>{e(v)}</b><span>{e(t)}</span></div>" for t, v in a["stats"]) + "</div>", unsafe_allow_html=True)
+    if a["kind"] == "minor":
+        live_table("Declared damage vs model", ["Parts", "Damage", "Confidence", "Severity", "Fix", "Status", "Reason"],
+                   [[e(", ".join(r["parts"]) or "—"), e(r["damage"]), pct(r["conf"]), e(round(r["severity"]) if r["severity"] is not None else "—"),
+                     e(r["fix"] or "—"), status_cell(r["status"]), e(r["reason"])] for r in a["rows"]])
+        hd, note = a.get("hidden"), a.get("hidden_note")
+        if hd or note:
+            with st.container(key=f"card_hidden_{cid}"):
+                st.markdown("**Hidden damage assessment**")
+                if hd:
+                    st.markdown(f"<div class='note {'warn' if hd.get('hidden_damage_likely') else 'ok'}'><b>{e(pretty(hd.get('verdict')))}</b>. {e(hd.get('summary') or '')}</div>", unsafe_allow_html=True)
+                    with st.expander("Details"):
+                        st.json(hd)
+                if note:
+                    st.caption(note)
+        if a["estimate"]:
+            live_table("Repair estimate", ["Part", "Severity", "Fix"],
+                       [[e(r.get("part_name") or r.get("part_id")), e(round(r.get("severity") or 0)), e(pretty(r.get("fix_type")))] for r in a["estimate"]])
+    else:
+        live_table("Client choice vs model", ["Part", "Client chose", "Model says", "Severity", "Status", "Reason"],
+                   [[e(r["panel"]), e(r["client"]), e(r["model"]), e("—" if r["severity"] is None else f"{r['severity']}/100"), status_cell(r["status"]), e(r["reason"])] for r in a["rows"]])
+    imgs = [x for x in a["images"] if x["image"]]
+    if imgs:
+        st.markdown("### Photo findings")
+        cols = st.columns(2)
+        for i, x in enumerate(imgs):
+            with cols[i % 2], st.container(key=f"card_find_{cid}_{i}"):
+                st.image(x["image"])
+                st.markdown(f"<b>{e(x['caption'])}</b>" + (f"<div class='hint'>{e(x['note'])}</div>" if x["note"] else ""), unsafe_allow_html=True)
 
 
 def render_claim(c):
-    tow = c["mode"] == "Towed"
-    for r in c["analysis"]:
-        a, b = st.columns([1, 3], vertical_alignment="center")
-        a.image(r["image"], use_container_width=True)
-        kv = [("Client said", r["client"]), ("Model", r["model"])]
-        if r["conf"] is not None:
-            kv.append(("Confidence", f"{float(r['conf']):.0%}"))
-        if r["severity"] is not None:
-            kv.append(("Severity", f"{r['severity']}/100"))
-        if r["fix"] and not tow:
-            kv.append(("Fix", r["fix"]))
-        b.markdown(f"<b>{e(r['panel'])}</b> <span class='{'s-Matched' if r['status'] == 'Matched' else 's-NeedsReview'}' style='margin-left:.5rem'>{e(r['status'])}</span>"
-                   f"<div class='kv'>" + "".join(f"<span>{e(k)} <b>{e(v)}</b></span>" for k, v in kv) + "</div>"
-                   f"<div class='hint'>{e(r['reason'])}</div>"
-                   + (f"<div class='note warn'>The model also sees: {e(', '.join(r['other']))}.</div>" if r["other"] else ""), unsafe_allow_html=True)
+    cid = c["id"]
+    if c["analysis"] is None:
+        render_declared(c)
+        n = len(c["items"])
+        a, b = st.columns([4, 1.3], vertical_alignment="center")
+        a.markdown(f"**Ready to inspect**  \n<span class='hint'>{n} item{'s' if n != 1 else ''}, each with a photo. Nothing has been checked yet.</span>", unsafe_allow_html=True)
+        if b.button("Run inspection", icon=":material/play_arrow:", key=f"run_{cid}", type="primary"):
+            with st.spinner("Checking the photos with the model…"):
+                run_inspection(cid)
+            st.rerun()
+        if c.get("error"):
+            st.error(c["error"])
+        if not LIVE:
+            st.caption("Demo mode: model findings are simulated until a real detection service is connected.")
+        return
+    render_results(cid, c["analysis"])
+    if not LIVE:
+        st.caption("Demo mode: model findings are simulated until a real detection service is connected.")
     if c["status"] == "Needs review":
         b1, b2, b3 = st.columns(3)
-        b1.button("Approve", icon=":material/check_circle:", key=f"ap_{c['id']}", type="primary", on_click=decide, args=(c["id"], "Approved"))
-        b2.button("Reject", icon=":material/cancel:", key=f"rj_{c['id']}", on_click=decide, args=(c["id"], "Rejected"))
-        b3.button("Re-run check", icon=":material/refresh:", key=f"rr_{c['id']}", on_click=recheck, args=(c["id"],))
+        b1.button("Approve", icon=":material/check_circle:", key=f"ap_{cid}", type="primary", on_click=decide, args=(cid, "Approved"))
+        b2.button("Reject", icon=":material/cancel:", key=f"rj_{cid}", on_click=decide, args=(cid, "Rejected"))
+        rerun = b3.button("Re-run inspection", icon=":material/refresh:", key=f"rr_{cid}")
     else:
         st.markdown(f"<div class='hint'>{e(c['status'])} · {'matched the model, no review needed' if c['decided_by'] == 'Automatic' else 'decided by the adjuster'}</div>", unsafe_allow_html=True)
-        st.button("Re-run check", icon=":material/refresh:", key=f"rr_{c['id']}", on_click=recheck, args=(c["id"],))
+        rerun = st.button("Re-run inspection", icon=":material/refresh:", key=f"rr_{cid}")
+    if rerun:
+        with st.spinner("Checking the photos with the model…"):
+            run_inspection(cid)
+        st.rerun()
+    if c.get("error"):
+        st.error(c["error"])
 
 
-for c in sorted(reversed(claims), key=lambda x: x["status"] != "Needs review"):   # claims needing a decision first
-    head = f"{c['id']} · {c['mode']} · {len(c['items'])} item(s)"
-    if c["status"] == "Needs review":
-        with st.container(key=f"card_claim_{c['id']}"):
-            st.markdown(f"<div class='ph-head'><span class='badge'>{e(c['id'][2:])}</span><div><b>{e(head)}</b></div>"
-                        f"<span class='tick' style='color:{COLOR[c['status']]}'>{e(c['status'])}</span></div>", unsafe_allow_html=True)
-            render_claim(c)
-    else:
-        with st.expander(f"{head} · {c['status']}"):
-            render_claim(c)
+OPEN = ("New", "Needs review")
+for c in sorted(reversed(claims), key=lambda x: x["status"] not in OPEN):   # claims waiting for action first
+    # every claim can be minimised; the ones waiting for action start open
+    with st.expander(f"{c['id']} · {c['mode']} · {len(c['items'])} item(s) · {LABEL.get(c['status'], c['status'])}", expanded=c["status"] in OPEN):
+        render_claim(c)
