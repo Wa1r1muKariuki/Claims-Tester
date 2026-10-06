@@ -9,6 +9,7 @@ import html
 import os
 
 import streamlit as st
+from PIL import Image, ImageOps
 
 import logic as L
 
@@ -20,10 +21,30 @@ CFG = {"panels": L.PANELS, "part_ids": {}, "damages": L.DAMAGES, "live": False} 
 
 def _info(damage):
     """One-line description for a damage type; backend labels like 'Smashed glass' map to the closest local type."""
-    for name in L.DAMAGES:
-        if name.lower() in damage.lower() or damage.lower() in name.lower():
-            return L.DAMAGE_INFO[name]
-    return ""
+    return L.DAMAGE_INFO.get(L.local_damage(damage), "")
+
+
+@st.cache_data(show_spinner=False)
+def _example(path, mtime):   # mtime in the key: a replaced photo is picked up without clearing the cache
+    im = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
+    im.thumbnail((900, 900))
+    return im
+
+
+def _examples(damage):
+    """The example photos (up to two) for a damage type, from examples/."""
+    local = L.local_damage(damage)
+    paths = [p for p in (L.find_example(local, v) for v in (0, 1)) if p] if local else []
+    return [_example(p, os.path.getmtime(p)) for p in paths]
+
+
+@st.dialog("Damage guide", width="small")
+def _guide(selected):
+    pick = st.pills("Damage type", L.DAMAGES, default=selected, selection_mode="single", label_visibility="collapsed") or selected
+    st.caption(L.DAMAGE_INFO[pick])
+    ims = _examples(pick)
+    for col, im, n in zip(st.columns(max(len(ims), 1)), ims, range(1, 3)):
+        col.image(im, caption=f"Example {n}")
 
 
 def _init():
@@ -151,9 +172,15 @@ def _head(step, labels):
 # ---------------- steps ----------------
 def _list_step(m, towed, items):
     with st.container(key="card_cl_form"):
-        st.markdown(f"**{'Parts to fix' if towed else 'Damaged parts'}**  \n<span class='hint'>"
-                    f"{'Choose each part and whether it needs repair or replacement.' if towed else 'Choose each part and the type of damage.'}</span>",
-                    unsafe_allow_html=True)
+        title = (f"**{'Parts to fix' if towed else 'Damaged parts'}**  \n<span class='hint'>"
+                 f"{'Choose each part and whether it needs repair or replacement.' if towed else 'Choose each part and the type of damage.'}</span>")
+        if towed:
+            st.markdown(title, unsafe_allow_html=True)
+        else:
+            h1, h2 = st.columns([4, 1.3], vertical_alignment="center")
+            h1.markdown(title, unsafe_allow_html=True)
+            if h2.button("Damage guide", icon=":material/help:", key="cl_guide"):   # opens only when clicked
+                _guide(L.local_damage(ss.get("cl_dmg")) or L.DAMAGES[0])
         c1, c2, c3 = st.columns([3, 3, 1.4], vertical_alignment="bottom")
         c1.selectbox("Vehicle part", CFG["panels"], key="cl_part")
         if towed:
