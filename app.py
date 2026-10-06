@@ -1,4 +1,5 @@
 import html
+import io
 import os
 import re
 
@@ -165,17 +166,17 @@ hr{border-color:var(--border)!important;}
  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:.35rem .85rem;border-radius:99px;}
 
 /* ---------- status tiles (kpi) ---------- */
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:.9rem;margin:0 0 1.5rem;}
-.kpi{--tone:var(--accent);position:relative;overflow:hidden;display:flex;gap:.95rem;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:20px;
- padding:1.05rem 1.1rem 1.2rem;box-shadow:var(--shadow);transition:transform .2s,border-color .2s,box-shadow .2s;}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.6rem;margin:0 0 1rem;}
+.kpi{--tone:var(--accent);position:relative;overflow:hidden;display:flex;gap:.65rem;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:14px;
+ padding:.6rem .8rem .75rem;box-shadow:var(--shadow);transition:transform .2s,border-color .2s,box-shadow .2s;}
 .kpi:before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(120% 150% at 0% 0%,color-mix(in srgb,var(--tone) 17%,transparent),transparent 62%);}
-.kpi:hover{transform:translateY(-3px);border-color:var(--tone);box-shadow:0 16px 30px -16px var(--tone);}
-.kpi .ico{position:relative;flex:none;width:46px;height:46px;border-radius:15px;display:flex;align-items:center;justify-content:center;
+.kpi:hover{transform:translateY(-2px);border-color:var(--tone);box-shadow:0 16px 30px -16px var(--tone);}
+.kpi .ico{position:relative;flex:none;width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;
  background:linear-gradient(135deg,var(--tone),color-mix(in srgb,var(--tone) 55%,#000));box-shadow:0 10px 20px -10px var(--tone);}
-.kpi .num{position:relative;font-family:'Manrope',sans-serif;font-weight:800;font-size:2.05rem;line-height:1;letter-spacing:-.02em;color:var(--fg);}
-.kpi .num.sm{font-size:1.45rem;padding:.2rem 0;}
-.kpi .lbl{position:relative;font-size:.68rem;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--mfg);margin-top:.4rem;}
-.kpi .meter{position:absolute;left:0;right:0;bottom:0;height:4px;background:color-mix(in srgb,var(--tone) 14%,transparent);}
+.kpi .num{position:relative;font-family:'Manrope',sans-serif;font-weight:800;font-size:1.4rem;line-height:1;letter-spacing:-.02em;color:var(--fg);}
+.kpi .num.sm{font-size:1.05rem;padding:.1rem 0;}
+.kpi .lbl{position:relative;font-size:.6rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--mfg);margin-top:.2rem;}
+.kpi .meter{position:absolute;left:0;right:0;bottom:0;height:3px;background:color-mix(in srgb,var(--tone) 14%,transparent);}
 .kpi .meter i{display:block;height:100%;width:var(--w,0%);background:var(--tone);border-radius:0 4px 4px 0;transition:width .5s;}
 .kpi.zero .num{color:var(--mfg);} .kpi.zero .ico{background:var(--card2);box-shadow:none;} .kpi.zero .ico svg{stroke:var(--mfg);}
 .kpi.t-info{--tone:var(--p1);} .kpi.t-warn{--tone:var(--warn);} .kpi.t-ok{--tone:var(--ok);} .kpi.t-bad{--tone:var(--bad);}
@@ -189,7 +190,7 @@ st.markdown(CSS.replace("__VARS__", DARK if ss.dark else LIGHT).replace("__SCHEM
 
 
 # ---------------- backend (same lists the Client tab uses) ----------------
-@st.cache_data(ttl=45, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def backend_health(base):
     try:
         return {"ok": True, **api.health()}
@@ -231,6 +232,22 @@ def e(x):
     return html.escape(str(x))
 
 
+@st.cache_data(show_spinner=False, max_entries=128)
+def thumb(data, size=900):
+    """Downscale a photo once and cache it, so each rerun doesn't re-send full-size images to the browser."""
+    if not isinstance(data, (bytes, bytearray)):
+        return data
+    try:
+        from PIL import Image, ImageOps
+        im = ImageOps.exif_transpose(Image.open(io.BytesIO(data)))
+        im.thumbnail((size, size))
+        out = io.BytesIO()
+        im.convert("RGB").save(out, "JPEG", quality=85)
+        return out.getvalue()
+    except Exception:
+        return data
+
+
 def pretty(x):
     s = str(x or "").replace("_", " ").strip()
     if s.isupper():
@@ -255,7 +272,7 @@ def kpi_grid(tiles):
     for label, value, tone, icon, share in tiles:
         zero = isinstance(value, int) and value == 0
         meter = f"<div class='meter'><i style='--w:{round(100 * share)}%'></i></div>" if share is not None else ""
-        out.append(f"<div class='kpi t-{tone}{' zero' if zero else ''}'><div class='ico'><svg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' "
+        out.append(f"<div class='kpi t-{tone}{' zero' if zero else ''}'><div class='ico'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' "
                    f"stroke-linecap='round' stroke-linejoin='round'>{ICONS[icon]}</svg></div><div><div class='num{' sm' if len(str(value)) > 4 else ''}'>{e(value)}</div>"
                    f"<div class='lbl'>{e(label)}</div></div>{meter}</div>")
     st.markdown("<div class='kpis'>" + "".join(out) + "</div>", unsafe_allow_html=True)
@@ -426,7 +443,7 @@ def render_declared(c):
     st.markdown(f"**{'Parts the client wants fixed' if c['mode'] == 'Towed' else 'Damage the client reported'}**")
     for it in c["items"]:
         a, b = st.columns([1, 5], vertical_alignment="center")
-        a.image(it["data"], use_container_width=True)
+        a.image(thumb(it["data"], 300), width="stretch")
         b.markdown(f"<div class='item'><b>{e(it['panel'])}</b>&nbsp;·&nbsp;<span style='color:var(--mfg)'>{e(it['detail'])}</span></div>", unsafe_allow_html=True)
 
 
@@ -473,7 +490,7 @@ def render_results(cid, a):
         cols = st.columns(2)
         for i, x in enumerate(imgs):
             with cols[i % 2], st.container(key=f"card_find_{cid}_{i}"):
-                st.image(x["image"])
+                st.image(thumb(x["image"], 900))
                 st.markdown(f"<b>{e(x['caption'])}</b>" + (f"<div class='hint'>{e(x['note'])}</div>" if x["note"] else ""), unsafe_allow_html=True)
 
 
