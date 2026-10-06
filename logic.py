@@ -1,8 +1,7 @@
-"""Logic for the car damage demo. No Streamlit imports, so it can be unit tested.
+"""Logic for the car damage claims demo. No Streamlit imports, so it can be unit tested.
 
-Real model API contract (set MODEL_API_URL): POST multipart field "image",
-respond with JSON list of {"Panel", "Damage", "conf", "bbox": [x1, y1, x2, y2]}
-(bbox as fractions 0-1 of image width/height).
+The `mock_*` functions are demo-mode stand-ins, used only when no backend is connected
+(API_BASE_URL unset or unreachable). They are shaped like the real API responses.
 """
 import base64
 import hashlib
@@ -11,7 +10,6 @@ import os
 import random
 
 import numpy as np
-import pandas as pd
 from PIL import Image, ImageDraw, ImageOps
 
 try:
@@ -21,13 +19,6 @@ try:
 except Exception:
     HEIC = False
 
-VIEWS = ["Front", "Rear", "Left", "Right"]
-VIEW_HINT = {
-    "Front": "Stand 3-4 m away, whole front of the car in frame.",
-    "Rear": "Stand 3-4 m away, whole rear of the car in frame.",
-    "Left": "Full driver-side profile, wheels to roof.",
-    "Right": "Full passenger-side profile, wheels to roof.",
-}
 PANELS = ["Front bumper", "Rear bumper", "Hood", "Trunk", "Roof", "Windshield",
           "Left front door", "Left rear door", "Right front door", "Right rear door",
           "Left fender", "Right fender", "Headlight", "Taillight", "Wheel/Tire"]
@@ -40,17 +31,38 @@ DAMAGE_INFO = {
     "Torn": "A long scratch that has slightly ripped the surface, leaving a jagged edge.",
     "Dislodged": "Part is still attached but knocked out of position, with an uneven gap.",
 }
-ALIASES = {"smashed glass": "Smashed", "broken lamp": "Broken", "smached": "Smashed", "smash": "Smashed", "scratches": "Scratch", "dented": "Dent",
-           "rip": "Torn", "ripped": "Torn", "displaced": "Dislodged"}
 
 
-def normalize(label, options):
-    s = str(label).strip().lower()
-    for o in options:
-        if o.lower() == s:
-            return o
-    a = ALIASES.get(s)
-    return a if a in options else None
+def local_damage(label):
+    """Map any damage label (local 'Smashed' or backend 'Smashed glass' / 'Broken lamp') to a local type, or None."""
+    s = str(label or "").strip().lower()
+    if not s:
+        return None
+    for n in DAMAGES:
+        if n.lower() in s or s in n.lower():
+            return n
+    for word, n in (("glass", "Smashed"), ("lamp", "Broken"), ("light", "Broken")):
+        if word in s:
+            return n
+    return None
+
+
+# ---------------- example photos (examples/<damage>_<1|2>.<jpg|jpeg|png|webp>) ----------------
+EXAMPLES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "examples")
+
+
+def find_example(damage, variant=0):
+    """Path of the example photo for a damage type (variant 0 or 1), or None. Case-insensitive."""
+    want = f"{str(damage).lower()}_{variant + 1}"
+    try:
+        files = sorted(os.listdir(EXAMPLES_DIR))
+    except OSError:
+        return None
+    for f in files:
+        stem, ext = os.path.splitext(f)
+        if stem.lower() == want and ext.lower() in (".jpg", ".jpeg", ".png", ".webp"):
+            return os.path.join(EXAMPLES_DIR, f)
+    return None
 
 
 # ---------------- image validity ----------------
@@ -101,196 +113,7 @@ def check_single(data: bytes, min_short=100, min_long=100):
     return {"blocking": blocking, "soft": soft, "hash": ahash(im), "size": (w, h)}
 
 
-def extract_report_items(data: bytes):
-    """MOCK report reader (deterministic per file) until a real OCR/LLM extractor is connected."""
-    rng = random.Random(hashlib.md5(data).hexdigest())
-    items = []
-    for _ in range(rng.randint(0, 3)):
-        it = (rng.choice(PANELS), rng.choice(DAMAGES))
-        if it not in items:
-            items.append(it)
-    return items
-
-
-def _validate_report(name: str, data: bytes):
-    """Validate an uploaded garage report. Returns {error, items, note}."""
-    name = name.lower()
-    if len(data) > 15 * 1024 * 1024:
-        return {"error": "file is larger than 15 MB", "items": [], "note": ""}
-    if name.endswith(".pdf"):
-        ok = data[:5] == b"%PDF-"
-        return {"error": None if ok else "not a valid PDF file", "items": extract_report_items(data) if ok else [],
-                "note": "PDF read."}
-    if name.endswith(".csv"):
-        try:
-            df = pd.read_csv(io.BytesIO(data))
-            df.columns = [c.strip().title() for c in df.columns]
-            df = df[["Panel", "Damage"]].dropna()
-        except Exception:
-            return {"error": "CSV must have Panel and Damage columns", "items": [], "note": ""}
-        items, bad = [], []
-        for _, r in df.iterrows():
-            p, d = normalize(r["Panel"], PANELS), normalize(r["Damage"], DAMAGES)
-            if p and d:
-                if (p, d) not in items:
-                    items.append((p, d))
-            else:
-                bad.append(f'{r["Panel"]} / {r["Damage"]}')
-        if bad:
-            return {"error": "unknown panel or damage type: " + "; ".join(bad[:5]), "items": [], "note": ""}
-        return {"error": None, "items": items, "note": f"{len(items)} item(s) loaded from CSV."}
-    try:
-        Image.open(io.BytesIO(data)).verify()
-        return {"error": None, "items": extract_report_items(data), "note": "Image read."}
-    except Exception:
-        return {"error": "not a readable image", "items": [], "note": ""}
-
-
-# ---------------- detection ----------------
-def detect_damage(view: str, data: bytes):
-    """MOCK unless MODEL_API_URL is set. Deterministic per image so reruns are stable."""
-    url = os.environ.get("MODEL_API_URL")
-    if url:
-        import requests
-        r = requests.post(url, files={"image": data}, timeout=90)
-        r.raise_for_status()
-        out = []
-        for d in r.json():
-            p, dm = normalize(d["Panel"], PANELS), normalize(d["Damage"], DAMAGES)
-            if p and dm:
-                out.append({"view": view, "Panel": p, "Damage": dm, "conf": float(d["conf"]), "bbox": d["bbox"]})
-        return out
-    view_panels = {"Front": ["Front bumper", "Hood", "Headlight", "Windshield"],
-                   "Rear": ["Rear bumper", "Trunk", "Taillight"],
-                   "Left": ["Left front door", "Left rear door", "Left fender", "Wheel/Tire"],
-                   "Right": ["Right front door", "Right rear door", "Right fender", "Wheel/Tire"]}
-    rng = random.Random(hashlib.md5(data).hexdigest())
-    out = []
-    for panel in rng.sample(view_panels[view], k=rng.randint(0, 2)):
-        x, y = rng.uniform(0.1, 0.5), rng.uniform(0.1, 0.5)
-        out.append({"view": view, "Panel": panel, "Damage": rng.choice(DAMAGES),
-                    "conf": round(rng.uniform(0.55, 0.97), 2),
-                    "bbox": [x, y, x + rng.uniform(0.15, 0.35), y + rng.uniform(0.15, 0.35)]})
-    return out
-
-
-def annotate(data: bytes, dets):
-    img = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
-    d = ImageDraw.Draw(img)
-    W, H = img.size
-    lw = max(3, W // 250)
-    for det in dets:
-        x1, y1, x2, y2 = det["bbox"]
-        box = [x1 * W, y1 * H, x2 * W, y2 * H]
-        d.rectangle(box, outline=(239, 68, 68), width=lw)
-        label = f'{det["Panel"]} / {det["Damage"]} {det["conf"]:.0%}'
-        d.rectangle([box[0], box[1], box[0] + 8 * len(label) + 8, box[1] + 16], fill=(239, 68, 68))
-        d.text((box[0] + 4, box[1] + 2), label, fill="white")
-    return img
-
-
-def compare(ref_items, dets, minor: bool):
-    """Journey 1: user-declared vs model. Journey 2: garage report vs model."""
-    ref = set(ref_items)
-    best = {}
-    for d in dets:
-        k = (d["Panel"], d["Damage"])
-        best[k] = max(best.get(k, 0), d["conf"])
-    src = "User-declared" if minor else "Garage report"
-    rows = [{"Panel": p, "Damage": dm, "Source": src, "Confidence": best.get((p, dm)),
-             "Status": "Matched" if (p, dm) in best else "Needs review"} for p, dm in sorted(ref)]
-    rows += [{"Panel": p, "Damage": dm, "Source": "Model only", "Confidence": best[(p, dm)],
-              "Status": "Listed only" if minor else "Info"} for p, dm in sorted(set(best) - ref)]
-    return pd.DataFrame(rows, columns=["Panel", "Damage", "Source", "Confidence", "Status"])
-
-
-def outcome(df):
-    return "Needs review" if (df["Status"] == "Needs review").any() else "Matched"
-
-
-# ---------------- illustrated examples ----------------
-BODY = [((52, 101, 164), (28, 58, 100), (78, 130, 192)),   # variant 0: blue
-        ((156, 44, 52), (92, 22, 30), (196, 84, 90))]      # variant 1: red
-
-
-def example_image(damage, variant=0, size=(480, 320)):
-    """Simple illustration (two variants per damage). Real photos in examples/ override it (see app)."""
-    W, H = size
-    base, edge, top = BODY[variant % 2]
-    img = Image.new("RGB", size, (232, 236, 242))
-    d = ImageDraw.Draw(img)
-    d.rounded_rectangle((18, 18, W - 18, H - 18), radius=26, fill=base, outline=edge, width=4)
-    d.rounded_rectangle((34, 30, W - 34, H // 3), radius=18, fill=top)
-    rnd = random.Random(f"{damage}{variant}")
-    dx = -70 if variant else 0                     # variant 1 puts the damage elsewhere on the panel
-    cx, cy = W // 2 + dx, H // 2 + 16
-    lite = tuple(min(255, c + 60) for c in base)
-    if damage == "Scratch":
-        for i in range(6 if variant == 0 else 3):
-            x = cx - 100 + i * 16
-            d.line([(x, cy - 80 + rnd.randint(-5, 5)), (x + 170 + variant * 40, cy + 70 + rnd.randint(-8, 8))],
-                   fill=(238, 241, 245), width=2)
-    elif damage == "Dent":
-        for i, r in enumerate(range(80 - variant * 20, 8, -8)):
-            c = tuple(max(0, int(v - i * k)) for v, k in zip(base, (2.2, 4, 6)))
-            d.ellipse((cx - r * 1.5, cy - r, cx + r * 1.5, cy + r), fill=c)
-        d.ellipse((cx - 60, cy - 44, cx - 15, cy - 18), fill=lite)
-    elif damage == "Smashed":
-        d.polygon([(cx - 22, cy - 15), (cx + 18, cy - 26), (cx + 34, cy + 11), (cx, cy + 30), (cx - 30, cy + 15)], fill=(18, 22, 30))
-        for a in range(14 if variant == 0 else 9):
-            ang = a * (0.4488 if variant == 0 else 0.698)
-            r = rnd.randint(70, 130)
-            d.line([(cx, cy), (cx + r * np.cos(ang), cy + r * np.sin(ang) * 0.7)], fill=(235, 238, 243), width=2)
-        for r in (45, 78):
-            d.ellipse((cx - r, cy - r * 0.7, cx + r, cy + r * 0.7), outline=(220, 225, 232), width=2)
-    elif damage == "Broken":
-        pts = [(cx - 15, 18)]
-        for i in range(1, 9):
-            pts.append((cx + (20 if i % 2 else -20) + rnd.randint(-6, 6), 18 + i * (H - 36) // 8))
-        d.polygon(pts + [(cx + 46, H - 18), (cx + 46, 18)], fill=(18, 22, 30))
-        d.line(pts, fill=(235, 238, 243), width=3)
-    elif damage == "Torn":
-        x0 = W - 18 if variant == 0 else W - 130
-        pts = [(x0, cy - 45)]
-        for i in range(1, 12):
-            pts.append((x0 - (110 if i % 2 else 52) - rnd.randint(0, 18), cy - 45 + i * 8))
-        pts.append((x0, cy + 50))
-        d.polygon(pts, fill=(150, 156, 165))
-        d.line(pts, fill=(20, 20, 24), width=3)
-    elif damage == "Dislodged":
-        d.rectangle((70 + dx // 2, 70, W - 70 + dx // 2, H // 2 + 8), fill=(15, 18, 24))
-        d.rectangle((80 + dx // 2, 90 + variant * 8, W - 55 + dx // 2, H // 2 + 30), fill=lite, outline=edge, width=3)
-    d.text((26, H - 20), f"Illustration: {damage} ({variant + 1}/2)", fill=(255, 255, 255))
-    return img
-
-
-def report_text(name: str, data: bytes):
-    """Plain text of a report, sent to the backend as garage_text (PDF text layer, CSV/TXT content)."""
-    n = name.lower()
-    try:
-        if n.endswith(".pdf"):
-            from pypdf import PdfReader
-            return "\n".join((p.extract_text() or "") for p in PdfReader(io.BytesIO(data)).pages[:20]).strip()[:20000]
-        if n.endswith((".csv", ".txt")):
-            return data.decode("utf-8", "ignore")[:20000]
-    except Exception:
-        pass
-    return ""
-
-
-def validate_report(name: str, data: bytes):
-    """Validate an uploaded garage report. Returns {error, items, note, text}."""
-    if name.lower().endswith(".txt"):
-        text = data.decode("utf-8", "ignore").strip()
-        out = {"error": None if text else "text file is empty", "items": extract_report_items(data) if text else [],
-               "note": "Text read."}
-    else:
-        out = _validate_report(name, data)
-    out["text"] = "" if out["error"] else report_text(name, data)
-    return out
-
-
-# ---------------- demo-mode stand-ins for the minor journey (used when no backend is connected) ----------------
+# ---------------- demo-mode stand-ins (used only when no backend is connected) ----------------
 def mock_minor_check(damage_type, data, threshold=None):
     """Shaped like the backend's /journeys/minor/check response. Deterministic per photo."""
     rng = random.Random(hashlib.md5(damage_type.encode() + data).hexdigest())
