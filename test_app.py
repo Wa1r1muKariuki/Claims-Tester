@@ -212,7 +212,7 @@ def test_inspection_shows_table_hidden_damage_estimate_and_photo_findings(backen
     at.button(key="vtab_insurance").click().run()
     inspect(at)
     t = text(at)
-    for want in ("Declared damage vs model", "Confidence", "Hidden damage assessment", "Low risk", "Repair estimate", "Photo findings", "Hidden damage flag"):
+    for want in ("Declared damage vs model", "Confidence", "Hidden damage assessment", "Low risk", "No hidden damage likely", "Repair estimate", "Photo findings", "Hidden damage likely"):
         assert want in t, want
 
 
@@ -255,6 +255,28 @@ def test_demo_mode_inspects_both_claim_types_without_a_backend():
     inspect(at, "C-001"); inspect(at, "C-002")
     for c in at.session_state["claims"]:
         assert c["status"] in ("Approved", "Needs review") and len(c["analysis"]["rows"]) == 2
+
+
+def test_hidden_damage_card_is_always_shown_and_demo_mode_simulates_it():
+    at = submit_claim(fresh(), "Not towed", [("Hood", "Dent")])
+    at.button(key="vtab_insurance").click().run()
+    inspect(at)
+    t = text(at)
+    assert "Hidden damage assessment" in t and "Simulated in demo mode" in t and "Hidden damage likely" in t
+
+
+def hero_markdown(at):
+    return [m.value for m in at.markdown if "class='hero sm'" in m.value]
+
+
+def test_status_tiles_and_heroes_on_both_tabs():
+    at = fresh()
+    assert "Choose the damage" in text(at)
+    # a <style> tag in the same element makes the app collapse it to zero height (this once hid the hero)
+    assert len(hero_markdown(at)) == 1 and "<style" not in hero_markdown(at)[0]
+    at.button(key="vtab_insurance").click().run()
+    t = text(at)
+    assert len(hero_markdown(at)) == 1 and "<style" not in hero_markdown(at)[0] and "class='kpis'" in t and "Awaiting inspection" in t
 
 
 # ---------------- damage examples ----------------
