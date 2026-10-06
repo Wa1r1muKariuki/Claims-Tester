@@ -117,6 +117,8 @@ hr{border-color:var(--border)!important;}
 [data-testid="stDialog"] [role="dialog"] .hint{color:var(--mfg);}
 [data-testid="stDialog"] [role="dialog"] button[aria-label="Close"]{color:var(--fg)!important;}
 [data-testid="stImage"] img{border-radius:12px;}
+[data-testid="stDialog"] [data-testid="stImage"] img{width:100%;aspect-ratio:4/3;object-fit:contain;background:var(--card2);border:1px solid var(--border);}
+[data-testid="stDialog"] [data-testid="stImageCaption"]{text-align:center;}
 
 /* ---------- layout blocks ---------- */
 .side-h{font-size:.68rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--mfg);margin:.4rem 0 .6rem;}
