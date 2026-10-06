@@ -179,10 +179,6 @@ with st.container(key="tabbar"):
     _tc = st.columns([1, 1, 4])
     for _c, (_id, _label, _icon) in zip(_tc, [("Client", "Client claim", ":material/person:"), ("Insurance", "Insurance review", ":material/apartment:")]):
         _c.button(_label, icon=_icon, key=f"{'vtabon' if ss.view == _id else 'vtab'}_{_id.lower()}", on_click=set_view, args=(_id,))
-if ss.view == "Client":
-    import client
-    client.render()
-    st.stop()
 
 
 # ---------------- helpers ----------------
@@ -276,6 +272,12 @@ DEFAULT_LABEL = {"Scratch": "Scratch", "Dent": "Dent", "Dislodged": "Dislodged",
                  "Smashed": "Smashed glass", "Broken": "Broken lamp"}
 DTYPES = [(d["key"], d.get("label") or d["key"]) for d in _T["detectors"]] if (LIVE and _T["detectors"]) else list(DEFAULT_LABEL.items())
 DLABEL = dict(DTYPES)
+
+# Client tab: same part list (GET /hidden-damage/parts) and damage types (GET /detectors) as the insurance side
+if ss.view == "Client":
+    import client
+    client.render(panels=PANEL_OPTIONS, part_ids=PID, damages=[lab for _, lab in DTYPES], live=LIVE)
+    st.stop()
 
 
 def guide_name(tid):
