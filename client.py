@@ -67,25 +67,17 @@ def e(x):
     return html.escape(str(x))
 
 
-HERO_CSS = """<style>
-.hero.sm{min-height:0;margin-bottom:1.4rem;}
-.hero.sm .hero-in{padding:1.6rem 1.5rem 2.4rem;}
-.hero.sm .txt{padding-top:0;}
-.hero.sm h1{font-size:1.8rem;}
-.hero.sm p{margin:.5rem 0 0;font-size:.9rem;color:rgba(255,255,255,.85);}
-</style>"""
-
-
 @st.cache_data(show_spinner=False)
 def _hero_uri():
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "hero.jpg")
     return "data:image/jpeg;base64," + base64.b64encode(open(p, "rb").read()).decode() if os.path.exists(p) else ""
 
 
-def hero(kicker, title, em, sub):
+def hero(kicker, title, em, sub, chips=()):
     img = f"<img src='{_hero_uri()}' alt=''>" if _hero_uri() else ""
-    st.markdown(HERO_CSS + f"<div class='hero sm'>{img}<div class='shade'></div><div class='grid'></div><div class='hero-in'><div class='txt'>"
-                f"<div class='kick'>{e(kicker)}</div><h1>{e(title)}<br><em>{e(em)}</em></h1><p>{e(sub)}</p></div></div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='hero sm'>{img}<div class='shade'></div><div class='grid'></div><div class='hero-in'><div class='txt'>"
+                f"<div class='kick'>{e(kicker)}</div><h1>{e(title)}<br><em>{e(em)}</em></h1><p>{e(sub)}</p>"
+                + (f"<div class='chips'>{''.join(f'<span class=chip>{e(x)}</span>' for x in chips)}</div>" if chips else "") + "</div></div></div>", unsafe_allow_html=True)
 
 
 # ---------------- callbacks ----------------
@@ -270,7 +262,8 @@ def render(panels=None, part_ids=None, damages=None, live=False):
     m = ss.cl["mode"]
     towed = m == "Towed"
     items = ss.cl["items"][m]
-    hero("Client claim", "Report your", "vehicle damage", "Tell us what was damaged and attach a photo of each item.")
+    hero("Client claim", "Report your", "vehicle damage", "Tell us what was damaged and attach a photo of each item.",
+         chips=["1 · Choose the damage", "2 · Add a photo of each", "3 · Submit your claim"])
     left, right = st.columns([1, 3.6], gap="large")
     with left:
         st.markdown("<div class='side-h'>Vehicle status</div>", unsafe_allow_html=True)
