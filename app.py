@@ -20,10 +20,10 @@ except Exception:
 
 LIGHT = """--bg:#f4f6f9;--card:#ffffff;--card2:#f1f4f8;--fg:#0f1a22;--mfg:#63707a;--border:#dde3e8;--accent:#00706d;
 --p1:#0a8f89;--p2:#00605d;--secondary:#dcf1f0;--glow:rgba(0,112,109,.45);--shadow:0 1px 2px rgba(15,26,34,.06),0 8px 24px -12px rgba(15,26,34,.12);
---bad:#c13234;--ok:#00623b;--oksoft:#dcf6e5;--warn:#934f00;--warnsoft:#fff3d8;--ink:#0d1b22;"""
+--bad:#c13234;--ok:#00623b;--oksoft:#dcf6e5;--warn:#934f00;--warnsoft:#fff3d8;--ink:#0d1b22;--chrome:#dde1e7;"""
 DARK = """--bg:#0a1116;--card:#121c23;--card2:#19252d;--fg:#e8eff3;--mfg:#93a2ac;--border:#233340;--accent:#4fe3d5;
 --p1:#14b3a8;--p2:#0b7c75;--secondary:rgba(79,227,213,.12);--glow:rgba(20,179,168,.5);--shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px -12px rgba(0,0,0,.6);
---bad:#ff8a8c;--ok:#5fe0a0;--oksoft:rgba(95,224,160,.12);--warn:#ffc36b;--warnsoft:rgba(255,195,107,.12);--ink:#070d11;"""
+--bad:#ff8a8c;--ok:#5fe0a0;--oksoft:rgba(95,224,160,.12);--warn:#ffc36b;--warnsoft:rgba(255,195,107,.12);--ink:#070d11;--chrome:#05090c;"""
 
 CSS = """
 <style>
@@ -33,7 +33,7 @@ html,body,.stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"]{backg
 .stApp,[data-testid="stMain"]{overflow-x:hidden;}
 header[data-testid="stHeader"],[data-testid="stDecoration"],[data-testid="stToolbar"],#MainMenu,footer{display:none!important;}
 [data-testid="stElementContainer"]:has(style){position:absolute;height:0;width:0;overflow:hidden;margin:0;padding:0;}
-.block-container,[data-testid="stMainBlockContainer"],[data-testid="stAppViewBlockContainer"]{max-width:1240px;padding:0 1.5rem 4rem!important;margin-top:0!important;}
+.block-container,[data-testid="stMainBlockContainer"],[data-testid="stAppViewBlockContainer"]{max-width:1240px;padding:48px 1.5rem 4rem!important;margin-top:0!important;}
 [data-testid="stAppViewContainer"]>.main,[data-testid="stMain"],section.main{padding-top:0!important;}
 [data-testid="stMainBlockContainer"]>[data-testid="stVerticalBlock"]>[data-testid="stElementContainer"]:first-child{margin-top:0;}
 h1,h2,h3,.disp{font-family:'Manrope',sans-serif!important;color:var(--fg);}
@@ -61,9 +61,9 @@ hr{border-color:var(--border)!important;}
 .kick{font-size:.7rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);}
 .hero h1{color:#fff!important;font-size:2.4rem;line-height:1.08;font-weight:800;margin:.4rem 0 0;padding:0;letter-spacing:-.02em;}
 .hero h1 em{font-style:normal;background:linear-gradient(90deg,#7ff5e9,#4aa8ff);-webkit-background-clip:text;background-clip:text;color:transparent;}
-.st-key-topstatus{position:fixed;top:.9rem;right:3.7rem;z-index:1000;width:auto!important;}
+.st-key-topstatus{position:fixed;top:.65rem;right:3.7rem;z-index:1000;width:auto!important;}
 .st-key-topstatus .pill{height:34px;padding:0 .85rem;background:rgba(13,27,34,.78);border:1px solid rgba(255,255,255,.25);box-shadow:0 6px 18px -8px rgba(0,0,0,.5);}
-.st-key-theme_toggle{position:fixed;top:.9rem;right:1.2rem;z-index:1000;width:auto!important;}
+.st-key-theme_toggle{position:fixed;top:.65rem;right:1.2rem;z-index:1000;width:auto!important;}
 .st-key-theme_toggle button{width:34px!important;height:34px!important;min-height:34px!important;padding:0!important;border-radius:50%!important;color:#fff!important;
  background:rgba(13,27,34,.78)!important;border:1px solid rgba(255,255,255,.3)!important;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 6px 18px -8px rgba(0,0,0,.5)!important;}
 .st-key-theme_toggle button:hover{transform:rotate(18deg) scale(1.08)!important;background:rgba(13,27,34,.95)!important;color:#fff!important;}
@@ -140,15 +140,49 @@ hr{border-color:var(--border)!important;}
 .mc-h{font-size:.72rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--mfg);margin:.2rem 0 .5rem;}
 .mc-empty{border:1px dashed var(--border);background:var(--card2,var(--card));border-radius:14px;padding:1.8rem 1rem;text-align:center;color:var(--mfg);font-size:.85rem;}
 .kv{display:flex;flex-wrap:wrap;gap:.3rem .9rem;font-size:.8rem;color:var(--mfg);margin:.4rem 0;} .kv b{color:var(--fg);}
+
+/* ---------- browser-style view tabs ---------- */
+.st-key-tabbar{position:fixed;top:0;left:0;right:0;z-index:999;height:48px;background:var(--chrome);padding:8px 1rem 0;border-bottom:1px solid var(--border);}
+.st-key-tabbar [data-testid="stHorizontalBlock"]{gap:0!important;flex-wrap:nowrap!important;align-items:flex-end;max-width:1240px;margin:0 auto;}
+.st-key-tabbar [data-testid="stColumn"]{width:auto!important;flex:0 0 auto!important;min-width:0!important;overflow:visible!important;}
+.st-key-tabbar [data-testid="stElementContainer"],.st-key-tabbar .stButton{overflow:visible!important;width:auto!important;}
+[class*="st-key-vtab_"] button,[class*="st-key-vtabon_"] button{position:relative;width:220px;height:40px;min-height:40px;border:0!important;border-radius:12px 12px 0 0!important;box-shadow:none!important;
+ justify-content:flex-start;padding:0 1rem;font-size:.86rem;transform:none!important;overflow:visible;}
+[class*="st-key-vtab_"] button{background:transparent!important;color:var(--mfg)!important;height:32px;min-height:32px;margin-bottom:0;border-radius:9px!important;}
+[class*="st-key-vtab_"] button:hover{background:rgba(255,255,255,.55)!important;color:var(--fg)!important;}
+[class*="st-key-vtabon_"] button{background:var(--bg)!important;color:var(--fg)!important;font-weight:700;}
+[class*="st-key-vtabon_"] button *{color:var(--fg)!important;}
+[class*="st-key-vtabon_"] button:before,[class*="st-key-vtabon_"] button:after{content:"";position:absolute;bottom:0;width:10px;height:10px;pointer-events:none;}
+[class*="st-key-vtabon_"] button:before{left:-10px;background:radial-gradient(circle at 0 0,transparent 9.5px,var(--bg) 10px);}
+[class*="st-key-vtabon_"] button:after{right:-10px;background:radial-gradient(circle at 100% 0,transparent 9.5px,var(--bg) 10px);}
+@media(max-width:700px){[class*="st-key-vtab_"] button,[class*="st-key-vtabon_"] button{width:44vw;}}
 </style>
 """
 ss = st.session_state
 ss.setdefault("dark", False)
 st.markdown(CSS.replace("__VARS__", DARK if ss.dark else LIGHT).replace("__SCHEME__", "dark" if ss.dark else "light"), unsafe_allow_html=True)
+ss.setdefault("view", "Client")
+if "towed_ui" not in ss and "_prev_towed" in ss:   # widget keys are dropped while the Client tab is shown: restore
+    ss.towed_ui = ss._prev_towed
 for k, v in {"step": 0, "mn_types": [], "mn_inst": {}, "mn_seq": 0, "thr_mode": "prod", "thr_val": 0.5, "estimate": [], "photos": {}, "seq": {}, "counter": 0, "nonce": {x: 0 for x in L.VIEWS}, "accepted": {},
              "declared": [], "garage": [], "report": None, "rep_n": 0, "towed_ui": "Not towed", "_prev_towed": "Not towed",
              "flags": {"none_minor": False, "none_major": False, "confirmed": False}}.items():
     ss.setdefault(k, v)
+
+
+# ---------------- view tabs (Client claim / Insurance review) ----------------
+def set_view(v):
+    ss.view = v
+
+
+with st.container(key="tabbar"):
+    _tc = st.columns([1, 1, 4])
+    for _c, (_id, _label, _icon) in zip(_tc, [("Client", "Client claim", ":material/person:"), ("Insurance", "Insurance review", ":material/apartment:")]):
+        _c.button(_label, icon=_icon, key=f"{'vtabon' if ss.view == _id else 'vtab'}_{_id.lower()}", on_click=set_view, args=(_id,))
+if ss.view == "Client":
+    import client
+    client.render()
+    st.stop()
 
 
 # ---------------- helpers ----------------
