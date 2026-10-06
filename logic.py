@@ -137,6 +137,17 @@ def mock_minor_check(damage_type, data, threshold=None):
             "image_jpeg_b64": base64.b64encode(b.getvalue()).decode()}
 
 
+def mock_hidden_damage(severities):
+    """Demo-mode hidden-damage assessment, shaped like the backend's `hidden_damage` block. Scales with the worst severity."""
+    sev = [float(s) for s in severities if s is not None]
+    if not sev:
+        return None
+    p = round(max(sev) * 0.6)
+    likely = p >= 38
+    return {"verdict": "elevated risk" if likely else "low risk", "hidden_damage_likely": likely, "probability": p / 100,
+            "summary": f"{'Elevated' if likely else 'Low'} risk of hidden damage ({p}%). Simulated in demo mode."}
+
+
 def mock_minor_finalize(items):
     """Shaped like /journeys/minor/finalize. part_ids are 1-based indexes into PANELS in demo mode."""
     rows = []
@@ -148,10 +159,8 @@ def mock_minor_finalize(items):
                      "status": "matched" if it["confirmed"] else "needs_review",
                      "reason": "The detector confirmed it." if it["confirmed"] else "The detector did not confirm it. A person should review it."})
     n = sum(r["status"] != "matched" for r in rows)
-    p = round(max((r["severity"] for r in rows), default=0) * 0.6)      # simulated: scales with the worst severity
-    likely = p >= 38
-    hidden = {"verdict": "elevated risk" if likely else "low risk", "hidden_damage_likely": likely, "probability": p / 100,
-              "summary": f"{'Elevated' if likely else 'Low'} risk of hidden damage ({p}%). Simulated in demo mode."} if rows else None
+    hidden = mock_hidden_damage([r["severity"] for r in rows])
+    likely = bool(hidden and hidden["hidden_damage_likely"])
     return {"outcome": "needs_review" if n else "matched",
             "summary": f"{n} of {len(rows)} declared damage type(s) need review." if n else "Every declared damage type was confirmed.",
             "needs_review_count": n, "hidden_damage_flag": likely, "rows": rows, "hidden_damage": hidden, "hidden_damage_note": None,
