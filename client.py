@@ -61,10 +61,10 @@ def _hero_uri():
     return "data:image/jpeg;base64," + base64.b64encode(open(p, "rb").read()).decode() if os.path.exists(p) else ""
 
 
-def _hero(title, em, sub):
+def hero(kicker, title, em, sub):
     img = f"<img src='{_hero_uri()}' alt=''>" if _hero_uri() else ""
     st.markdown(HERO_CSS + f"<div class='hero sm'>{img}<div class='shade'></div><div class='grid'></div><div class='hero-in'><div class='txt'>"
-                f"<div class='kick'>Client claim</div><h1>{e(title)}<br><em>{e(em)}</em></h1><p>{e(sub)}</p></div></div></div>", unsafe_allow_html=True)
+                f"<div class='kick'>{e(kicker)}</div><h1>{e(title)}<br><em>{e(em)}</em></h1><p>{e(sub)}</p></div></div></div>", unsafe_allow_html=True)
 
 
 # ---------------- callbacks ----------------
@@ -243,7 +243,7 @@ def render(panels=None, part_ids=None, damages=None, live=False):
     m = ss.cl["mode"]
     towed = m == "Towed"
     items = ss.cl["items"][m]
-    _hero("Report your", "vehicle damage", "Tell us what was damaged and attach a photo of each item.")
+    hero("Client claim", "Report your", "vehicle damage", "Tell us what was damaged and attach a photo of each item.")
     left, right = st.columns([1, 3.6], gap="large")
     with left:
         st.markdown("<div class='side-h'>Vehicle status</div>", unsafe_allow_html=True)
