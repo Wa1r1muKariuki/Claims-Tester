@@ -60,14 +60,14 @@ def submit_claim(at, mode, items):
 
 
 def inspect(at, cid="C-001"):
-    """Insurance tab: nothing is checked until the adjuster clicks Run inspection."""
-    at.button(key=f"run_{cid}").click().run()
-    assert not at.exception, at.exception
+    """A submitted claim is inspected automatically; this just checks that it was."""
+    c = next(x for x in at.session_state["claims"] if x["id"] == cid)
+    assert c["analysis"] is not None and not c.get("error"), c.get("error")
     return at
 
 
 # ---------------- fake backend (stdlib only) ----------------
-CALLS = []   # paths the app called on the fake backend, so tests can prove nothing runs automatically
+CALLS = []   # paths the app called on the fake backend
 PARTS = [{"part_id": 7, "part_name": "hood", "label": "Hood (bonnet)"}, {"part_id": 9, "part_name": "door", "label": "Front door"}]
 DETECTORS = [{"key": "dent", "label": "Dent"}, {"key": "scratch", "label": "Scratch"}]
 
@@ -184,18 +184,28 @@ def test_empty_inbox():
     assert "No claims yet" in text(fresh("Insurance"))
 
 
-def test_submitted_claim_is_not_checked_until_inspection_is_run(backend):
+def test_submitted_claim_is_inspected_automatically(backend):
     at = submit_claim(fresh(), "Not towed", [("Hood (bonnet)", "Dent"), ("Front door", "Scratch")])
-    at.button(key="vtab_insurance").click().run()
     c = at.session_state["claims"][0]
-    assert c["status"] == "New" and c["analysis"] is None
-    assert not [p for p in CALLS if "minor" in p or "severity" in p]          # no model call yet
-    t = text(at)
-    assert "Ready to inspect" in t and "Hood (bonnet)" in t and "Front door" in t   # the declared damage is listed
-    assert "Declared damage vs model" not in t
-    inspect(at)
+    assert c["analysis"] is not None and c["status"] != "New"            # already inspected, before anyone opens the Insurance tab
     assert [p for p in CALLS if "minor/check" in p] and [p for p in CALLS if "minor/finalize" in p]
-    assert "Declared damage vs model" in text(at)
+    assert "Success: your claim was submitted" in text(at) and "Declared damage vs model" not in text(at)   # the client sees no findings
+    at.button(key="vtab_insurance").click().run()
+    t = text(at)
+    assert "Declared damage vs model" in t and "Ready to inspect" not in t and "Hood (bonnet)" in t and "Front door" in t
+    n = len(CALLS)
+    at.button(key="vtab_client").click().run(); at.button(key="vtab_insurance").click().run()
+    assert len(CALLS) == n                                              # switching tabs never re-runs the model
+
+
+def test_a_failed_automatic_inspection_is_not_retried_and_can_be_run_by_hand(backend, monkeypatch):
+    import api
+    monkeypatch.setattr(api, "minor_check", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    at = submit_claim(fresh(), "Not towed", [("Hood (bonnet)", "Dent")])
+    at.button(key="vtab_insurance").click().run()
+    assert not at.exception
+    c = at.session_state["claims"][0]
+    assert c["analysis"] is not None and c["status"] == "Needs review" and "boom" in c["analysis"]["rows"][0]["reason"]
 
 
 def test_not_towed_all_matched_is_approved_automatically(backend):
@@ -234,11 +244,8 @@ def test_not_towed_mismatch_waits_for_adjuster_then_can_be_approved_or_rejected(
 
 def test_towed_choice_matching_model_is_approved_and_mismatch_is_not(backend):
     at = submit_claim(fresh(), "Towed", [("Hood (bonnet)", "Replace")])
-    at.button(key="vtab_insurance").click().run()
-    assert at.session_state["claims"][0]["status"] == "New"
-    inspect(at)
-    assert at.session_state["claims"][0]["status"] == "Approved"
-    at.button(key="vtab_client").click().run(); at.button(key="cl_new").click().run()
+    assert at.session_state["claims"][0]["status"] == "Approved"       # inspected on submit
+    at.button(key="cl_new").click().run()
     submit_claim(at, "Towed", [("Hood (bonnet)", "Repair")])
     at.button(key="vtab_insurance").click().run()
     inspect(at, "C-002")
@@ -251,7 +258,6 @@ def test_demo_mode_inspects_both_claim_types_without_a_backend():
     at.button(key="cl_new").click().run()
     submit_claim(at, "Towed", [("Hood", "Replace"), ("Roof", "Repair")])
     at.button(key="vtab_insurance").click().run()
-    assert all(c["status"] == "New" for c in at.session_state["claims"])
     inspect(at, "C-001"); inspect(at, "C-002")
     for c in at.session_state["claims"]:
         assert c["status"] in ("Approved", "Needs review") and len(c["analysis"]["rows"]) == 2
@@ -265,6 +271,23 @@ def test_hidden_damage_card_is_always_shown_and_demo_mode_simulates_it():
     assert "Hidden damage assessment" in t and "Simulated in demo mode" in t and "Hidden damage likely" in t
 
 
+def test_towed_claims_get_a_hidden_damage_assessment_in_demo_mode():
+    at = submit_claim(fresh(), "Towed", [("Hood", "Replace"), ("Roof", "Repair")])
+    c = at.session_state["claims"][0]
+    assert c["analysis"]["hidden"] is not None and "hidden_flag" in c["analysis"]
+    at.button(key="vtab_insurance").click().run()
+    t = text(at)
+    assert "Hidden damage assessment" in t and "Simulated in demo mode" in t and "Hidden damage likely" in t
+
+
+def test_towed_hidden_damage_is_flagged_not_invented_when_the_backend_cannot_assess_it(backend):
+    at = submit_claim(fresh(), "Towed", [("Hood (bonnet)", "Replace")])
+    c = at.session_state["claims"][0]
+    assert c["analysis"]["hidden"] is None and c["analysis"]["hidden_note"]
+    at.button(key="vtab_insurance").click().run()
+    assert "Not assessed" in text(at) and c["status"] == "Approved"
+
+
 def hero_markdown(at):
     return [m.value for m in at.markdown if "class='hero sm'" in m.value]
 
@@ -276,7 +299,25 @@ def test_status_tiles_and_heroes_on_both_tabs():
     assert len(hero_markdown(at)) == 1 and "<style" not in hero_markdown(at)[0]
     at.button(key="vtab_insurance").click().run()
     t = text(at)
-    assert len(hero_markdown(at)) == 1 and "<style" not in hero_markdown(at)[0] and "class='kpis'" in t and "Awaiting inspection" in t
+    assert len(hero_markdown(at)) == 1 and "<style" not in hero_markdown(at)[0] and "class='kpi " in t and "Awaiting inspection" in t
+    assert "awaiting inspection</span>" not in hero_markdown(at)[0]      # the hero no longer repeats the counts as chips
+
+
+def test_status_tiles_filter_the_claim_list(backend):
+    at = submit_claim(fresh(), "Not towed", [("Hood (bonnet)", "Dent")])                              # all matched -> Approved
+    at.button(key="cl_new").click().run()
+    submit_claim(at, "Not towed", [("Hood (bonnet)", "Dent"), ("Front door", "Scratch")])             # mismatch -> Needs review
+    at.button(key="vtab_insurance").click().run()
+    assert len(at.expander) >= 2
+    labels = lambda: [x.label for x in at.expander if x.label.startswith("C-")]
+    assert len(labels()) == 2
+    at.button(key="kpibtn_needsreview").click().run()
+    assert not at.exception and labels() == [l for l in labels() if "Needs review" in l] and len(labels()) == 1
+    assert "kpi t-warn sel" in text(at)
+    at.button(key="kpibtn_rejected").click().run()
+    assert labels() == [] and "No claims with this status" in text(at)
+    at.button(key="kpibtn_rejected").click().run()                      # clicking the active tile clears the filter
+    assert len(labels()) == 2 and "sel'" not in text(at)
 
 
 # ---------------- damage examples ----------------
@@ -303,7 +344,8 @@ def test_damage_guide_is_at_the_top_and_examples_show_only_when_opened():
 def test_summary_prefix_is_cleaned_and_claims_are_collapsible(backend):
     at = submit_claim(fresh(), "Not towed", [("Front door", "Scratch")])
     at.button(key="vtab_insurance").click().run()
-    assert len(at.expander) == 1 and at.expander[0].proto.expanded
+    claim_boxes = [x for x in at.expander if x.label.startswith("C-")]
+    assert len(claim_boxes) == 1 and claim_boxes[0].proto.expanded
     inspect(at)
     assert "human adjuster" not in text(at).lower()
 
