@@ -330,3 +330,9 @@ def mock_minor_finalize(items):
             "needs_review_count": n, "hidden_damage_flag": False, "rows": rows, "hidden_damage": None, "hidden_damage_note": None,
             "estimate": [{"part_id": r["part_ids"][0], "part_name": (r["part_names"] or [None])[0], "severity": r["severity"], "fix_type": r["fix_type"]}
                          for r in rows if r["part_ids"]]}
+
+
+def mock_severity(data):
+    """Shaped like /severity/grade. Deterministic per photo."""
+    sev = round(random.Random(hashlib.md5(b"sev" + data).hexdigest()).uniform(15, 90))
+    return {"ok": True, "configured": False, "composite": sev, "cutoff": 70, "verdict": "REPLACE" if sev > 70 else "REPAIR"}
