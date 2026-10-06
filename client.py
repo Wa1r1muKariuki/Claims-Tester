@@ -15,6 +15,15 @@ import logic as L
 ss = st.session_state
 MODES = ["Not towed", "Towed"]
 ACTIONS = ["Repair", "Replace"]
+CFG = {"panels": L.PANELS, "part_ids": {}, "damages": L.DAMAGES, "live": False}   # set by render()
+
+
+def _info(damage):
+    """One-line description for a damage type; backend labels like 'Smashed glass' map to the closest local type."""
+    for name in L.DAMAGES:
+        if name.lower() in damage.lower() or damage.lower() in name.lower():
+            return L.DAMAGE_INFO[name]
+    return ""
 
 
 def _init():
@@ -68,13 +77,13 @@ def _set_mode():
 
 
 def _add(m):
-    part = ss.get("cl_part") or L.PANELS[0]
-    detail = (ss.get("cl_act") or "Repair") if m == "Towed" else (ss.get("cl_dmg") or L.DAMAGES[0])
+    part = ss.get("cl_part") or CFG["panels"][0]
+    detail = (ss.get("cl_act") or "Repair") if m == "Towed" else (ss.get("cl_dmg") or CFG["damages"][0])
     lst = ss.cl["items"][m]
     if any(i["panel"] == part and i["detail"] == detail for i in lst):
         return
     ss.cl["seq"] += 1
-    lst.append({"id": ss.cl["seq"], "panel": part, "detail": detail, "data": None, "pseq": 0, "accepted": False, "n": 0})
+    lst.append({"id": ss.cl["seq"], "panel": part, "part_id": CFG["part_ids"].get(part), "detail": detail, "data": None, "pseq": 0, "accepted": False, "n": 0})
 
 
 def _remove(m, iid):
@@ -141,14 +150,14 @@ def _list_step(m, towed, items):
                     f"{'Choose each part and whether it needs repair or replacement.' if towed else 'Choose each part and the type of damage.'}</span>",
                     unsafe_allow_html=True)
         c1, c2, c3 = st.columns([3, 3, 1.4], vertical_alignment="bottom")
-        c1.selectbox("Vehicle part", L.PANELS, key="cl_part")
+        c1.selectbox("Vehicle part", CFG["panels"], key="cl_part")
         if towed:
             c2.segmented_control("Repair or replace", ACTIONS, default="Repair", key="cl_act")
         else:
-            dmg = c2.selectbox("Damage type", L.DAMAGES, key="cl_dmg")
+            dmg = c2.selectbox("Damage type", CFG["damages"], key="cl_dmg")
         c3.button("Add", icon=":material/add:", key="cl_add", type="primary", on_click=_add, args=(m,))
         if not towed:
-            st.caption(L.DAMAGE_INFO[dmg])
+            st.caption(_info(dmg))
         st.markdown("<div class='mc-h' style='margin-top:1rem'>Your list</div>", unsafe_allow_html=True)
         if not items:
             st.markdown("<div class='mc-empty'>Nothing added yet.</div>", unsafe_allow_html=True)
@@ -221,7 +230,9 @@ def _success(m, count):
 
 
 # ---------------- entry point ----------------
-def render():
+def render(panels=None, part_ids=None, damages=None, live=False):
+    """panels/part_ids/damages come from the backend (list parts / detectors) when connected; local demo lists otherwise."""
+    CFG.update(panels=list(panels or L.PANELS), part_ids=dict(part_ids or {}), damages=list(damages or L.DAMAGES), live=live)
     _init()
     m = ss.cl["mode"]
     towed = m == "Towed"
