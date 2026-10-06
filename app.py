@@ -51,7 +51,7 @@ hr{border-color:var(--border)!important;}
 .nav{display:flex;align-items:center;min-height:38px;}
 .brand{display:flex;gap:.7rem;align-items:center;}
 .logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--p1),var(--p2));display:flex;align-items:center;justify-content:center;box-shadow:0 8px 20px -6px var(--glow);}
-.bt{font-family:'Manrope';font-weight:800;font-size:.85rem;line-height:1.1;color:#fff;letter-spacing:.02em;}
+.bt{font-family:'Manrope',sans-serif;font-weight:800;font-size:.85rem;line-height:1.1;color:#fff;letter-spacing:.02em;}
 .pill{display:flex;gap:.45rem;align-items:center;font-size:.74rem;font-weight:600;color:#fff;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);
  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:.42rem .85rem;border-radius:99px;}
 .dot{width:8px;height:8px;border-radius:50%;background:#4ade80;box-shadow:0 0 0 4px rgba(74,222,128,.25);}
@@ -68,7 +68,7 @@ hr{border-color:var(--border)!important;}
 .st-key-theme_toggle button *{color:#fff!important;font-size:1.05rem;}
 
 /* ---------- typography + cards ---------- */
-.stitle{font-family:'Manrope';font-weight:800;font-size:1.9rem;margin:.3rem 0 0;letter-spacing:-.01em;} .sub{color:var(--mfg);font-size:.92rem;margin:.3rem 0 1.2rem;}
+.stitle{font-family:'Manrope',sans-serif;font-weight:800;font-size:1.9rem;margin:.3rem 0 0;letter-spacing:-.01em;} .sub{color:var(--mfg);font-size:.92rem;margin:.3rem 0 1.2rem;}
 [class*="st-key-card"]{background:var(--card);border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow);padding:1.1rem 1.2rem;transition:border-color .2s,transform .2s;}
 [class*="st-key-card_photo"]:hover{border-color:var(--accent);transform:translateY(-2px);}
 .ph-head{display:flex;gap:.75rem;align-items:flex-start;border-bottom:1px solid var(--border);padding-bottom:.8rem;margin-bottom:.8rem;}
@@ -125,7 +125,7 @@ hr{border-color:var(--border)!important;}
 .banner.bad{background:var(--warnsoft);color:var(--warn);} .banner.ok{background:var(--oksoft);color:var(--ok);}
 .banner h3{margin:0;color:inherit!important;font-size:1.15rem;} .banner p{margin:.2rem 0 0;font-size:.85rem;color:inherit!important;}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.75rem;margin-bottom:1.2rem;}
-.stat{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:.9rem 1rem;box-shadow:var(--shadow);} .stat b{font-family:'Manrope';font-size:1.6rem;display:block;} .stat span{font-size:.75rem;color:var(--mfg);}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:.9rem 1rem;box-shadow:var(--shadow);} .stat b{font-family:'Manrope',sans-serif;font-size:1.6rem;display:block;} .stat span{font-size:.75rem;color:var(--mfg);}
 .stat b.sm{font-size:.95rem;padding:.55rem 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .tbl{background:var(--card);border:1px solid var(--border);border-radius:16px;overflow-x:auto;margin-bottom:.6rem;box-shadow:var(--shadow);}
 .tbl h3{margin:0;padding:.9rem 1.2rem;font-size:1rem;border-bottom:1px solid var(--border);}
@@ -154,6 +154,31 @@ hr{border-color:var(--border)!important;}
 [class*="st-key-vtabon_"] button:before{left:-10px;background:radial-gradient(circle at 0 0,transparent 9.5px,var(--bg) 10px);}
 [class*="st-key-vtabon_"] button:after{right:-10px;background:radial-gradient(circle at 100% 0,transparent 9.5px,var(--bg) 10px);}
 @media(max-width:700px){[class*="st-key-vtab_"] button,[class*="st-key-vtabon_"] button{width:44vw;}}
+/* ---------- hero (compact variant used on every tab) ---------- */
+.hero.sm{min-height:0;margin-top:-3rem;margin-bottom:1.4rem;}
+.hero.sm .hero-in{padding:2rem 1.5rem 3rem;}
+.hero.sm .txt{padding-top:0;max-width:720px;}
+.hero.sm h1{font-size:2.2rem;}
+.hero.sm p{margin:.6rem 0 0;font-size:.95rem;color:rgba(255,255,255,.85);}
+.chips{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1.1rem;}
+.chip{display:inline-flex;align-items:center;gap:.4rem;font-size:.74rem;font-weight:600;color:#fff;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.24);
+ backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:.35rem .85rem;border-radius:99px;}
+
+/* ---------- status tiles (kpi) ---------- */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:.9rem;margin:0 0 1.5rem;}
+.kpi{--tone:var(--accent);position:relative;overflow:hidden;display:flex;gap:.95rem;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:20px;
+ padding:1.05rem 1.1rem 1.2rem;box-shadow:var(--shadow);transition:transform .2s,border-color .2s,box-shadow .2s;}
+.kpi:before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(120% 150% at 0% 0%,color-mix(in srgb,var(--tone) 17%,transparent),transparent 62%);}
+.kpi:hover{transform:translateY(-3px);border-color:var(--tone);box-shadow:0 16px 30px -16px var(--tone);}
+.kpi .ico{position:relative;flex:none;width:46px;height:46px;border-radius:15px;display:flex;align-items:center;justify-content:center;
+ background:linear-gradient(135deg,var(--tone),color-mix(in srgb,var(--tone) 55%,#000));box-shadow:0 10px 20px -10px var(--tone);}
+.kpi .num{position:relative;font-family:'Manrope',sans-serif;font-weight:800;font-size:2.05rem;line-height:1;letter-spacing:-.02em;color:var(--fg);}
+.kpi .num.sm{font-size:1.45rem;padding:.2rem 0;}
+.kpi .lbl{position:relative;font-size:.68rem;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--mfg);margin-top:.4rem;}
+.kpi .meter{position:absolute;left:0;right:0;bottom:0;height:4px;background:color-mix(in srgb,var(--tone) 14%,transparent);}
+.kpi .meter i{display:block;height:100%;width:var(--w,0%);background:var(--tone);border-radius:0 4px 4px 0;transition:width .5s;}
+.kpi.zero .num{color:var(--mfg);} .kpi.zero .ico{background:var(--card2);box-shadow:none;} .kpi.zero .ico svg{stroke:var(--mfg);}
+.kpi.t-info{--tone:var(--p1);} .kpi.t-warn{--tone:var(--warn);} .kpi.t-ok{--tone:var(--ok);} .kpi.t-bad{--tone:var(--bad);}
 </style>
 """
 ss = st.session_state
@@ -214,6 +239,28 @@ def pretty(x):
 
 
 # ---------------- display helpers ----------------
+ICONS = {
+    "clock": "<circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/>",
+    "alert": "<path d='M12 3 2 20h20L12 3z'/><path d='M12 10v4M12 17.5v.01'/>",
+    "check": "<circle cx='12' cy='12' r='9'/><path d='m8 12 3 3 5-6'/>",
+    "x": "<circle cx='12' cy='12' r='9'/><path d='m9 9 6 6M15 9l-6 6'/>",
+    "search": "<circle cx='11' cy='11' r='7'/><path d='m21 21-4.3-4.3'/>",
+    "eye": "<path d='M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z'/><circle cx='12' cy='12' r='3'/>",
+}
+
+
+def kpi_grid(tiles):
+    """tiles: (label, value, tone, icon, share). tone: info|warn|ok|bad. share 0-1 draws a meter along the bottom, or None."""
+    out = []
+    for label, value, tone, icon, share in tiles:
+        zero = isinstance(value, int) and value == 0
+        meter = f"<div class='meter'><i style='--w:{round(100 * share)}%'></i></div>" if share is not None else ""
+        out.append(f"<div class='kpi t-{tone}{' zero' if zero else ''}'><div class='ico'><svg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' "
+                   f"stroke-linecap='round' stroke-linejoin='round'>{ICONS[icon]}</svg></div><div><div class='num{' sm' if len(str(value)) > 4 else ''}'>{e(value)}</div>"
+                   f"<div class='lbl'>{e(label)}</div></div>{meter}</div>")
+    st.markdown("<div class='kpis'>" + "".join(out) + "</div>", unsafe_allow_html=True)
+
+
 def pct(x):
     return "—" if x is None else f"{float(x):.0%}"
 
@@ -276,11 +323,13 @@ def analyse_minor(c):
         other = [DLABEL.get(x, x) for x in dict.fromkeys(norm_other(y) for y in (r.get("other_damage") or [])) if x and x != t]
         images.append({"caption": f"{DLABEL.get(t, t)} · {it['panel']}", "image": api.b64_bytes(r.get("image_jpeg_b64")) or it["data"],
                        "note": f"{'Confirmed' if ok else 'Not found'} · {pct(r.get('max_conf'))}" + (f" · also sees {', '.join(other)}" if other else "")})
-    flag = bool(fin.get("hidden_damage_flag"))
+    hd = fin.get("hidden_damage")
+    flag = bool(fin.get("hidden_damage_flag")) or bool((hd or {}).get("hidden_damage_likely"))
     return {"kind": "minor", "outcome": "needs_review" if needs else "matched",
             "summary": (fin.get("summary") if fin and not failed else None) or (f"{needs} of {len(rows)} declared damage type(s) need review." if needs else "Every declared damage type was confirmed."),
-            "stats": [("Damage types checked", len(rows)), ("Needs review", needs), ("Hidden damage flag", "Yes" if flag else "No")],
-            "rows": rows, "hidden_flag": flag, "hidden": fin.get("hidden_damage"), "hidden_note": fin.get("hidden_damage_note"),
+            "stats": [("Damage types checked", len(rows), "info", "search", None), ("Needs review", needs, "warn" if needs else "ok", "alert", None),
+                      ("Hidden damage likely", "Yes" if flag else ("No" if hd is not None else "—"), "bad" if flag else ("ok" if hd is not None else "info"), "eye", None)],
+            "rows": rows, "hidden_flag": flag, "hidden": hd, "hidden_note": fin.get("hidden_damage_note"),
             "estimate": fin.get("estimate") or [], "images": images}
 
 
@@ -307,7 +356,8 @@ def analyse_towed(c):
     return {"kind": "towed", "outcome": "needs_review" if needs else "matched",
             "summary": f"{needs} of {len(rows)} item(s) need review: the model disagrees or could not grade the photo." if needs
             else "The model agrees with the client on every item.",
-            "stats": [("Items checked", len(rows)), ("Needs review", needs), ("Model agrees", len(rows) - needs)],
+            "stats": [("Items checked", len(rows), "info", "search", None), ("Needs review", needs, "warn" if needs else "ok", "alert", None),
+                      ("Model agrees", len(rows) - needs, "ok", "check", None)],
             "rows": rows, "images": [{"caption": f"{r['panel']} · {r['client']}", "image": r["image"], "note": f"Model says {r['model'].lower()}" if r["model"] != "—" else ""} for r in rows]}
 
 
@@ -320,6 +370,7 @@ def run_inspection(cid):
         c["error"] = f"Inspection failed: {ex}"
         return
     c["analysis"] = a
+    ss.just_ran = cid   # keep this claim open so the adjuster sees the results even if it was approved automatically
     auto = a["outcome"] == "matched" and bool(a["rows"]) and not a.get("hidden_flag")
     c["status"], c["decided_by"] = ("Approved", "Automatic") if auto else ("Needs review", None)
 
@@ -355,11 +406,13 @@ if ss.view == "Client":
     st.stop()
 
 # ---------------- insurance review ----------------
-client.hero("Insurance review", "Client", "claims", "Review what the client declared, then run the inspection to check the photos against the model. Matches are approved; the rest wait for you.")
 claims = ss.claims
 count = lambda s: sum(c["status"] == s for c in claims)
-st.markdown("<div class='stats'>" + "".join(f"<div class='stat'><b>{n}</b><span>{t}</span></div>" for t, n in
-            [("Awaiting inspection", count("New")), ("Needs review", count("Needs review")), ("Approved", count("Approved")), ("Rejected", count("Rejected"))]) + "</div>", unsafe_allow_html=True)
+client.hero("Insurance review", "Client", "claims", "Review what the client declared, then run the inspection to check the photos against the model. Matches are approved; the rest wait for you.",
+            chips=[f"{count('New')} awaiting inspection", f"{count('Needs review')} need review", "Connected to the detection API" if LIVE else "Demo workspace"])
+_n = max(len(claims), 1)
+kpi_grid([("Awaiting inspection", count("New"), "info", "clock", count("New") / _n), ("Needs review", count("Needs review"), "warn", "alert", count("Needs review") / _n),
+          ("Approved", count("Approved"), "ok", "check", count("Approved") / _n), ("Rejected", count("Rejected"), "bad", "x", count("Rejected") / _n)])
 if not claims:
     st.markdown("<div class='mc-empty'>No claims yet. Submit one on the Client tab and it will appear here, waiting for inspection.</div>", unsafe_allow_html=True)
     st.stop()
@@ -376,6 +429,12 @@ def render_declared(c):
         b.markdown(f"<div class='item'><b>{e(it['panel'])}</b>&nbsp;·&nbsp;<span style='color:var(--mfg)'>{e(it['detail'])}</span></div>", unsafe_allow_html=True)
 
 
+def verdict_lead(hd):
+    """'Low risk. ' unless the summary already starts with it."""
+    v, summ = pretty(hd.get("verdict")), str(hd.get("summary") or "")
+    return "" if not v or summ.lower().startswith(v.lower()) else v + ". "
+
+
 def clean_summary(x):
     """Drop the backend's 'NEEDS REVIEW → human adjuster:' prefix; the banner title already says it."""
     return re.sub(r"^\s*needs review\s*(→|->)?\s*human adjuster\s*:?\s*", "", str(x or ""), flags=re.I).strip()
@@ -384,21 +443,23 @@ def clean_summary(x):
 def render_results(cid, a):
     bad = "review" in a["outcome"]
     st.markdown(f"<div class='banner {'bad' if bad else 'ok'}'><div><h3>{e(pretty(a['outcome']))}</h3><p>{e(clean_summary(a['summary']))}</p></div></div>", unsafe_allow_html=True)
-    st.markdown("<div class='stats'>" + "".join(f"<div class='stat'><b>{e(v)}</b><span>{e(t)}</span></div>" for t, v in a["stats"]) + "</div>", unsafe_allow_html=True)
+    kpi_grid(a["stats"])
     if a["kind"] == "minor":
         live_table("Declared damage vs model", ["Parts", "Damage", "Confidence", "Severity", "Fix", "Status", "Reason"],
                    [[e(", ".join(r["parts"]) or "—"), e(r["damage"]), pct(r["conf"]), e(round(r["severity"]) if r["severity"] is not None else "—"),
                      e(r["fix"] or "—"), status_cell(r["status"]), e(r["reason"])] for r in a["rows"]])
         hd, note = a.get("hidden"), a.get("hidden_note")
-        if hd or note:
-            with st.container(key=f"card_hidden_{cid}"):
-                st.markdown("**Hidden damage assessment**")
-                if hd:
-                    st.markdown(f"<div class='note {'warn' if hd.get('hidden_damage_likely') else 'ok'}'><b>{e(pretty(hd.get('verdict')))}</b>. {e(hd.get('summary') or '')}</div>", unsafe_allow_html=True)
-                    with st.expander("Details"):
-                        st.json(hd)
-                if note:
-                    st.caption(note)
+        with st.container(key=f"card_hidden_{cid}"):
+            st.markdown("**Hidden damage assessment**")
+            if hd:
+                likely = bool(a["hidden_flag"])
+                st.markdown(f"<div class='note {'warn' if likely else 'ok'}'><b>{'Hidden damage likely found' if likely else 'No hidden damage likely'}</b> · {e(verdict_lead(hd))}{e(hd.get('summary') or '')}</div>", unsafe_allow_html=True)
+                with st.expander("Details"):
+                    st.json(hd)
+            else:
+                st.markdown("<div class='note'>Not assessed. No hidden-damage assessment came back for this claim.</div>", unsafe_allow_html=True)
+            if note:
+                st.caption(note)
         if a["estimate"]:
             live_table("Repair estimate", ["Part", "Severity", "Fix"],
                        [[e(r.get("part_name") or r.get("part_id")), e(round(r.get("severity") or 0)), e(pretty(r.get("fix_type")))] for r in a["estimate"]])
@@ -453,5 +514,5 @@ def render_claim(c):
 OPEN = ("New", "Needs review")
 for c in sorted(reversed(claims), key=lambda x: x["status"] not in OPEN):   # claims waiting for action first
     # every claim can be minimised; the ones waiting for action start open
-    with st.expander(f"{c['id']} · {c['mode']} · {len(c['items'])} item(s) · {LABEL.get(c['status'], c['status'])}", expanded=c["status"] in OPEN):
+    with st.expander(f"{c['id']} · {c['mode']} · {len(c['items'])} item(s) · {LABEL.get(c['status'], c['status'])}", expanded=c["status"] in OPEN or ss.get("just_ran") == c["id"]):
         render_claim(c)
