@@ -148,9 +148,13 @@ def mock_minor_finalize(items):
                      "status": "matched" if it["confirmed"] else "needs_review",
                      "reason": "The detector confirmed it." if it["confirmed"] else "The detector did not confirm it. A person should review it."})
     n = sum(r["status"] != "matched" for r in rows)
+    p = round(max((r["severity"] for r in rows), default=0) * 0.6)      # simulated: scales with the worst severity
+    likely = p >= 38
+    hidden = {"verdict": "elevated risk" if likely else "low risk", "hidden_damage_likely": likely, "probability": p / 100,
+              "summary": f"{'Elevated' if likely else 'Low'} risk of hidden damage ({p}%). Simulated in demo mode."} if rows else None
     return {"outcome": "needs_review" if n else "matched",
             "summary": f"{n} of {len(rows)} declared damage type(s) need review." if n else "Every declared damage type was confirmed.",
-            "needs_review_count": n, "hidden_damage_flag": False, "rows": rows, "hidden_damage": None, "hidden_damage_note": None,
+            "needs_review_count": n, "hidden_damage_flag": likely, "rows": rows, "hidden_damage": hidden, "hidden_damage_note": None,
             "estimate": [{"part_id": r["part_ids"][0], "part_name": (r["part_names"] or [None])[0], "severity": r["severity"], "fix_type": r["fix_type"]}
                          for r in rows if r["part_ids"]]}
 
