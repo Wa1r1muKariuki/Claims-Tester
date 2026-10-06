@@ -14,7 +14,9 @@ def scene(seed, w=1200, h=800):
 
 
 def fresh():
-    at = AppTest.from_file("app.py", default_timeout=30).run()
+    at = AppTest.from_file("app.py", default_timeout=30)
+    at.session_state["view"] = "Insurance"
+    at.run()
     assert not at.exception, at.exception
     return at
 
