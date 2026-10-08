@@ -303,6 +303,12 @@ def status_cell(status):
 # Towed:     the severity model's Repair/Replace verdict must equal what the client chose.
 # Nothing is checked on submit. A claim stays "New" until someone runs the inspection.
 # Every item matched (and no hidden-damage flag) -> approved automatically; otherwise it waits for an adjuster.
+def has_sev(r):
+    """True only when the backend gave a real severity score (not a missing one that api.minor_item turns into 0)."""
+    sv = r.get("severity") or {}
+    return bool(sv.get("ok")) and sv.get("composite") is not None
+
+
 def analyse_minor(c):
     checked, failed = [], []
     for it in c["items"]:
@@ -340,9 +346,17 @@ def analyse_minor(c):
         extra += [{"part": it["panel"], "damage": DLABEL.get(x, x), "severity": None}
                   for x in dict.fromkeys(norm_other(y) for y in (r.get("other_damage") or [])) if x and x != t]
     fin = (api.minor_finalize(items) if LIVE else L.mock_minor_finalize(items, extra)) if items else {}
-    rows = [{"parts": [x for x in (r.get("part_names") or []) if x], "damage": r.get("damage") or pretty(r.get("damage_type")), "conf": r.get("max_conf"),
-             "severity": r.get("severity"), "fix": pretty(r.get("fix_type")), "status": r.get("status"), "reason": r.get("reason") or ""}
-            for r in fin.get("rows") or []] + failed
+    # a missing severity goes to the backend as 0 (it needs a number), but it must not be shown as a real score
+    no_sev = {t for t, lst in groups.items() if not any(has_sev(r) for _, r in lst)}
+    no_sev_parts = {it["part_id"] for it, _, _ in checked} - {it["part_id"] for it, _, r in checked if has_sev(r)}
+
+    def row(r):
+        miss = norm_other(r.get("damage_type") or r.get("damage")) in no_sev
+        return {"parts": [x for x in (r.get("part_names") or []) if x], "damage": r.get("damage") or pretty(r.get("damage_type")), "conf": r.get("max_conf"),
+                "severity": None if miss else r.get("severity"), "fix": "" if miss else pretty(r.get("fix_type")), "sev_missing": miss,
+                "status": r.get("status"), "reason": r.get("reason") or ""}
+    rows = [row(r) for r in fin.get("rows") or []] + failed
+    estimate = [{**x, "severity": None, "fix_type": None, "sev_missing": True} if x.get("part_id") in no_sev_parts else x for x in fin.get("estimate") or []]
     needs = sum("review" in str(r["status"]).lower() for r in rows)
     # one image per photo (= per vehicle part), listing every damage checked on it
     photos = {}
@@ -369,7 +383,7 @@ def analyse_minor(c):
     return {"kind": "minor", "outcome": "needs_review" if needs else "matched",
             "summary": (fin.get("summary") if fin and not failed else None) or (f"{needs} of {len(rows)} declared damage type(s) need review." if needs else "Every declared damage type was confirmed."),
             "rows": rows, "hidden_flag": flag, "hidden": hd, "hidden_note": fin.get("hidden_damage_note"),
-            "estimate": fin.get("estimate") or [], "images": images}
+            "estimate": estimate, "sev_missing": sorted(DLABEL.get(t, t) for t in no_sev), "images": images}
 
 
 def grade_item(it):
@@ -522,10 +536,16 @@ def render_hidden(cid, a):
             st.caption(note)
 
 
+def sev_cell(r):
+    return "<span class='s-NeedsReview'>No score</span>" if r.get("sev_missing") else e(round(r["severity"]) if r.get("severity") is not None else "—")
+
+
 def hidden_status(a):
     """Table cell: whether hidden damage is likely, not likely, or was not assessed."""
     if not a.get("hidden"):
         return "<span class='s-Info'>Not assessed</span>"
+    if a.get("sev_missing") and not a["hidden_flag"]:
+        return "<span class='s-Info'>Unreliable</span>"
     return "<span class='s-NeedsReview'>Likely</span>" if a["hidden_flag"] else "<span class='s-Matched'>Not likely</span>"
 
 
@@ -533,7 +553,7 @@ def hidden_reason(a):
     hd = a.get("hidden")
     if not hd:
         return a.get("hidden_note") or "No hidden-damage assessment came back for this claim."
-    return verdict_lead(hd) + str(hd.get("summary") or "")
+    return verdict_lead(hd) + str(hd.get("summary") or "") + (" Severity scores were missing, so this may be understated." if a.get("sev_missing") else "")
 
 
 def render_results(cid, a):
@@ -541,14 +561,17 @@ def render_results(cid, a):
     st.markdown(f"<div class='banner {'bad' if bad else 'ok'}'><div><h3>{e(pretty(a['outcome']))}</h3><p>{e(clean_summary(a['summary']))}</p></div></div>", unsafe_allow_html=True)
     if a["kind"] == "minor":
         live_table("Declared damage vs model", ["Parts", "Damage", "Confidence", "Severity", "Fix", "Status", "Reason"],
-                   [[e(", ".join(r["parts"]) or "—"), e(r["damage"]), pct(r["conf"]), e(round(r["severity"]) if r["severity"] is not None else "—"),
+                   [[e(", ".join(r["parts"]) or "—"), e(r["damage"]), pct(r["conf"]), sev_cell(r),
                      e(r["fix"] or "—"), status_cell(r["status"]), e(r["reason"])] for r in a["rows"]]
                    + [["<b>Whole vehicle</b>", "<b>Hidden damage</b>", pct((a.get("hidden") or {}).get("probability")), "—", "—",
                        hidden_status(a), e(hidden_reason(a))]])
+        if a.get("sev_missing"):
+            st.markdown(f"<div class='note bad'>Severity unavailable for {e(', '.join(a['sev_missing']))}. The severity model returned no score, "
+                        "so Fix and the hidden-damage result may be unreliable.</div>", unsafe_allow_html=True)
         render_hidden(cid, a)
         if a["estimate"]:
             live_table("Repair estimate", ["Part", "Severity", "Fix"],
-                       [[e(r.get("part_name") or r.get("part_id")), e(round(r.get("severity") or 0)), e(pretty(r.get("fix_type")))] for r in a["estimate"]])
+                       [[e(r.get("part_name") or r.get("part_id")), sev_cell(r), e(pretty(r.get("fix_type")) if r.get("fix_type") else "—")] for r in a["estimate"]])
     else:
         live_table("Client choice vs model", ["Part", "Client chose", "Model says", "Severity", "Status", "Reason"],
                    [[e(r["panel"]), e(r["client"]), e(r["model"]), e("—" if r["severity"] is None else f"{r['severity']}/100"), status_cell(r["status"]), e(r["reason"])] for r in a["rows"]]
