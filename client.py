@@ -118,6 +118,18 @@ def _drop_photo(m, iid):
             i.update(data=None, accepted=False, n=i["n"] + 1)
 
 
+def _reuse(m, iid, src_id):
+    """Copy an already-attached photo onto another item, so one photo can cover several damages."""
+    lst = ss.cl["items"][m]
+    src = next((i for i in lst if i["id"] == src_id), None)
+    if not src or not src["data"]:
+        return
+    ss.cl["pseq"] += 1
+    for i in lst:
+        if i["id"] == iid:
+            i.update(data=src["data"], pseq=ss.cl["pseq"], accepted=False, n=i["n"] + 1)
+
+
 def _accept(m, iid):
     for i in ss.cl["items"][m]:
         if i["id"] == iid:
@@ -141,23 +153,8 @@ def _reset(m):
 
 # ---------------- helpers ----------------
 def _statuses(items):
-    """Per item: blocking / soft messages. The newer of two look-alike photos is blocked."""
-    out = {}
-    for it in items:
-        if not it["data"]:
-            continue
-        r = _check(it["data"])
-        blocking = list(r["blocking"])
-        if r["hash"] is not None:
-            for o in items:
-                if o is it or not o["data"] or o["pseq"] >= it["pseq"]:
-                    continue
-                ro = _check(o["data"])
-                if ro["hash"] is not None and L.hamming(r["hash"], ro["hash"]) <= L.DUP_BITS:
-                    blocking.append(f"This looks the same as the {o['panel'].lower()} photo. Use a different photo.")
-                    break
-        out[it["id"]] = {**r, "blocking": blocking}
-    return out
+    """Per item: blocking / soft messages. The same photo may be used for several items."""
+    return {it["id"]: _check(it["data"]) for it in items if it["data"]}
 
 
 def _head(step, labels):
@@ -232,9 +229,16 @@ def _photo_step(m, items):
             if it["data"]:
                 st.button("Replace photo", icon=":material/refresh:", key=f"cl_rp_{iid}", on_click=_drop_photo, args=(m, iid))
             else:
-                mode = st.segmented_control("Source", ["Upload", "Camera"], default="Upload", key=f"cl_src_{iid}", label_visibility="collapsed")
+                donors = [o for o in items if o["data"] and o["id"] != iid and not (stat.get(o["id"]) or {}).get("blocking")]
+                mode = st.segmented_control("Source", ["Upload", "Camera"] + (["Same photo"] if donors else []), default="Upload",
+                                            key=f"cl_src_{iid}", label_visibility="collapsed")
                 k = f"{iid}_{it['n']}"
-                if mode == "Camera":
+                f = None
+                if mode == "Same photo" and donors:
+                    src = st.selectbox("Photo from", [d["id"] for d in donors], key=f"cl_ru_{k}", label_visibility="collapsed",
+                                       format_func=lambda i: next(f"{d['panel']} · {d['detail']}" for d in donors if d["id"] == i))
+                    st.button("Use this photo", icon=":material/content_copy:", key=f"cl_ruse_{iid}", on_click=_reuse, args=(m, iid, src))
+                elif mode == "Camera":
                     f = st.camera_input(f"{it['panel']} photo", key=f"cl_cam_{k}", label_visibility="collapsed")
                 else:
                     f = st.file_uploader(f"{it['panel']} photo", type=["jpg", "jpeg", "png", "webp"] + (["heic", "heif"] if L.HEIC else []),
