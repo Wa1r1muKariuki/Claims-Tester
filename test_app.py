@@ -69,14 +69,16 @@ def inspect(at, cid="C-001"):
 # ---------------- fake backend (stdlib only) ----------------
 CALLS = []   # paths the app called on the fake backend
 NO_SEVERITY = [False]   # when True the fake severity model returns no score
+HIDDEN_LIKELY = [False]   # what the fake /hidden-damage/assess says
+ASSESS_BODIES = []   # request bodies the app sent to /hidden-damage/assess
 PARTS = [{"part_id": 7, "part_name": "hood", "label": "Hood (bonnet)"}, {"part_id": 9, "part_name": "door", "label": "Front door"}]
 DETECTORS = [{"key": "dent", "label": "Dent"}, {"key": "scratch", "label": "Scratch"}]
 
 
 class _H(BaseHTTPRequestHandler):
-    def _send(self, obj):
+    def _send(self, obj, code=200):
         b = json.dumps(obj).encode()
-        self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b)
+        self.send_response(code); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b)
 
     def do_GET(self):
         self._send({"/api/v1/health": {"status": "ok"}, "/api/v1/hidden-damage/parts": PARTS, "/api/v1/detectors": DETECTORS}.get(self.path, {}))
@@ -101,6 +103,21 @@ class _H(BaseHTTPRequestHandler):
             ok = t == "dent"   # the fake model "sees" dents only
             self._send({"damage_type": t, "label": t, "confirmed": ok, "available": True, "error": None, "max_conf": 0.9 if ok else 0.2,
                         "thr": 0.5, "other_damage": [], "quality": {}, "severity": {"ok": False, "composite": None} if NO_SEVERITY[0] else {"ok": True, "composite": 40}, "fix_type": "repair", "image_jpeg_b64": None})
+        elif self.path.startswith("/api/v1/hidden-damage/assess"):
+            items = json.loads(body)["items"]
+            ASSESS_BODIES.append(items)
+            bad = [i["part_id"] for i in items if i["part_id"] not in {p["part_id"] for p in PARTS}]
+            if bad:
+                self._send({"detail": f"Unknown part_id(s): {bad}. See GET /api/v1/hidden-damage/parts"}, 422)
+                return
+            worst = max(i["severity"] for i in items)
+            names = {p["part_id"]: p["label"] for p in PARTS}
+            self._send({"verdict": "INSPECT" if HIDDEN_LIKELY[0] else "LOW RISK", "hidden_damage_likely": HIDDEN_LIKELY[0], "claim_risk": round(worst * 0.6),
+                        "gate": 38, "zone": "front", "zone_name": "Front", "n_lines": len(items), "n_repair": 0,
+                        "check_first": [{"system": "Suspension", "risk": 62}], "risk_by_system": [], "hidden_parts": [],
+                        "summary": f"{'Elevated' if HIDDEN_LIKELY[0] else 'Low'} risk of hidden damage ({round(worst * 0.6)}%).",
+                        "estimate": [{"part_id": i["part_id"], "part_name": names[i["part_id"]], "severity": i["severity"],
+                                      "fix_type": "Part to Replace" if i["severity"] > 70 else "Part to Repair"} for i in items]})
         elif self.path.startswith("/api/v1/severity/grade"):
             self._send({"ok": True, "configured": True, "composite": 85, "cutoff": 70, "verdict": "REPLACE"})   # the fake model always says Replace
         else:
@@ -115,7 +132,7 @@ _PORT = [8740]
 
 @pytest.fixture
 def backend():
-    CALLS.clear()
+    CALLS.clear(); ASSESS_BODIES.clear(); HIDDEN_LIKELY[0] = False
     _PORT[0] += 1
     srv = HTTPServer(("127.0.0.1", _PORT[0]), _H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -319,12 +336,41 @@ def test_towed_claims_get_a_hidden_damage_assessment_in_demo_mode():
     assert "Hidden damage assessment" in t and "Simulated in demo mode" in t and "<b>Hidden damage</b>" in t
 
 
-def test_towed_hidden_damage_is_flagged_not_invented_when_the_backend_cannot_assess_it(backend):
+def test_towed_claim_calls_hidden_damage_assess_with_part_id_and_severity(backend):
+    at = submit_claim(fresh(), "Towed", [("Hood (bonnet)", "Replace")])
+    assert ASSESS_BODIES == [[{"part_id": 7, "severity": 85}]]            # the part's backend id + the graded severity
+    c = at.session_state["claims"][0]
+    assert c["analysis"]["hidden"]["verdict"] == "LOW RISK" and c["analysis"]["hidden_flag"] is False and c["status"] == "Approved"
+    at.button(key="vtab_insurance").click().run()
+    t = text(at)
+    assert "No hidden damage likely" in t and "Repair estimate" in t and "Part to Replace" in t and "Check first" in t
+    assert "51%" in t and "5100%" not in t                                    # claim_risk 51 is a percentage, not 5100%
+
+
+def test_towed_hidden_damage_likely_blocks_automatic_approval(backend):
+    HIDDEN_LIKELY[0] = True
     at = submit_claim(fresh(), "Towed", [("Hood (bonnet)", "Replace")])
     c = at.session_state["claims"][0]
-    assert c["analysis"]["hidden"] is None and c["analysis"]["hidden_note"]
+    assert c["analysis"]["outcome"] == "matched" and c["analysis"]["hidden_flag"] is True and c["status"] == "Needs review"
     at.button(key="vtab_insurance").click().run()
-    assert "Not assessed" in text(at) and c["status"] == "Approved"
+    assert "Hidden damage likely found" in text(at)
+
+
+def test_towed_assess_failure_is_reported_not_hidden_or_invented(backend, monkeypatch):
+    monkeypatch.setitem(PARTS[0], "part_id", 7)
+    HIDDEN_LIKELY[0] = False
+    at = fresh()
+    at.session_state["cl"]["mode"] = "Towed"; at.run()
+    at.selectbox(key="cl_part").set_value("Hood (bonnet)"); at.segmented_control(key="cl_act").set_value("Replace"); at.button(key="cl_add").click().run()
+    at.session_state["cl"]["items"]["Towed"][0]["part_id"] = 99999        # a part the backend does not know -> 422
+    at.session_state["cl"]["items"]["Towed"][0]["data"] = scene(5); at.session_state["cl"]["pseq"] += 1
+    at.session_state["cl"]["items"]["Towed"][0]["pseq"] = at.session_state["cl"]["pseq"]
+    at.button(key="cl_to_photos").click().run(); at.button(key="cl_submit").click().run()
+    c = at.session_state["claims"][0]
+    assert c["analysis"]["hidden"] is None and "Unknown part_id" in c["analysis"]["hidden_note"]
+    assert c["analysis"]["outcome"] == "matched"                          # the severity check itself still worked
+    at.button(key="vtab_insurance").click().run()
+    assert "Not assessed" in text(at)
 
 
 def hero_markdown(at):
