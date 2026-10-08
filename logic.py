@@ -127,19 +127,33 @@ def mock_minor_check(damage_type, data, threshold=None):
             "image_jpeg_b64": base64.b64encode(b.getvalue()).decode()}
 
 
-def mock_hidden_damage(severities):
-    """Demo-mode hidden-damage assessment, shaped like the backend's `hidden_damage` block. Scales with the worst severity."""
-    sev = [float(s) for s in severities if s is not None]
+def mock_hidden_damage(findings):
+    """Demo-mode hidden-damage assessment, shaped like the backend's `hidden_damage` block.
+
+    `findings` must list EVERY damage present on the vehicle, not only the ones that were graded: dicts like
+    {"part": "Hood", "damage": "Dent", "severity": 62 or None}. Damage that could not be graded, or that was only seen
+    in a photo, has severity None but still counts. Plain numbers (severities only) are accepted too.
+    Risk starts from the worst severity and grows with how many different damages and parts are affected.
+    """
+    fs = [f if isinstance(f, dict) else {"severity": f} for f in findings]
+    sev = [float(f["severity"]) for f in fs if f.get("severity") is not None]
     if not sev:
         return None
-    p = round(max(sev) * 0.6)
+    kinds = {(f.get("part"), local_damage(f.get("damage")) or str(f.get("damage") or "").lower())
+             for f in fs if f.get("part") or f.get("damage")}
+    parts = {f["part"] for f in fs if f.get("part")}
+    p = min(99, round(max(sev) * 0.6 + 4 * max(len(kinds) - 1, 0) + 4 * max(len(parts) - 1, 0)))
     likely = p >= 38
+    seen = sorted(f"{part or 'Vehicle'} · {dmg.title()}" if dmg else str(part) for part, dmg in kinds)
+    basis = f" Based on {len(kinds)} damage(s) on {len(parts)} part(s)." if kinds else ""
     return {"verdict": "elevated risk" if likely else "low risk", "hidden_damage_likely": likely, "probability": p / 100,
-            "summary": f"{'Elevated' if likely else 'Low'} risk of hidden damage ({p}%). Simulated in demo mode."}
+            "damages_considered": seen,
+            "summary": f"{'Elevated' if likely else 'Low'} risk of hidden damage ({p}%).{basis} Simulated in demo mode."}
 
 
-def mock_minor_finalize(items):
-    """Shaped like /journeys/minor/finalize. part_ids are 1-based indexes into PANELS in demo mode."""
+def mock_minor_finalize(items, extra=None):
+    """Shaped like /journeys/minor/finalize. part_ids are 1-based indexes into PANELS in demo mode.
+    `extra`: damages present that are not in `items` (could not be checked, or only seen in a photo); they feed the hidden-damage risk."""
     rows = []
     for it in items:
         rows.append({"damage_type": it["damage_type"], "damage": it["damage_type"].title(), "confirmed": it["confirmed"],
@@ -149,7 +163,8 @@ def mock_minor_finalize(items):
                      "status": "matched" if it["confirmed"] else "needs_review",
                      "reason": "The detector confirmed it." if it["confirmed"] else "The detector did not confirm it. A person should review it."})
     n = sum(r["status"] != "matched" for r in rows)
-    hidden = mock_hidden_damage([r["severity"] for r in rows])
+    hidden = mock_hidden_damage([{"part": pn, "damage": r["damage_type"], "severity": r["severity"]}
+                                 for r in rows for pn in (r["part_names"] or [None])] + list(extra or []))
     likely = bool(hidden and hidden["hidden_damage_likely"])
     return {"outcome": "needs_review" if n else "matched",
             "summary": f"{n} of {len(rows)} declared damage type(s) need review." if n else "Every declared damage type was confirmed.",
