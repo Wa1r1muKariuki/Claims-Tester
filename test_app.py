@@ -68,6 +68,7 @@ def inspect(at, cid="C-001"):
 
 # ---------------- fake backend (stdlib only) ----------------
 CALLS = []   # paths the app called on the fake backend
+NO_SEVERITY = [False]   # when True the fake severity model returns no score
 PARTS = [{"part_id": 7, "part_name": "hood", "label": "Hood (bonnet)"}, {"part_id": 9, "part_name": "door", "label": "Front door"}]
 DETECTORS = [{"key": "dent", "label": "Dent"}, {"key": "scratch", "label": "Scratch"}]
 
@@ -99,7 +100,7 @@ class _H(BaseHTTPRequestHandler):
             t = (re.search(rb'name="damage_type"\r\n\r\n(\w+)', body) or [None, b""])[1].decode()
             ok = t == "dent"   # the fake model "sees" dents only
             self._send({"damage_type": t, "label": t, "confirmed": ok, "available": True, "error": None, "max_conf": 0.9 if ok else 0.2,
-                        "thr": 0.5, "other_damage": [], "quality": {}, "severity": {"ok": True, "composite": 40}, "fix_type": "repair", "image_jpeg_b64": None})
+                        "thr": 0.5, "other_damage": [], "quality": {}, "severity": {"ok": False, "composite": None} if NO_SEVERITY[0] else {"ok": True, "composite": 40}, "fix_type": "repair", "image_jpeg_b64": None})
         elif self.path.startswith("/api/v1/severity/grade"):
             self._send({"ok": True, "configured": True, "composite": 85, "cutoff": 70, "verdict": "REPLACE"})   # the fake model always says Replace
         else:
@@ -430,3 +431,17 @@ def test_hidden_damage_depends_on_the_kind_of_damage_and_whether_it_was_confirme
     assert risk("Dislodged", 60)["hidden_damage_likely"]                    # a part knocked out of position usually does
     assert risk("Dent", 76)["hidden_damage_likely"] and not risk("Dent", 76, confirmed=False)["hidden_damage_likely"]
     assert "Hood" in risk("Dent", 76)["main_driver"]
+
+
+def test_missing_severity_is_shown_as_an_error_not_as_zero(backend):
+    NO_SEVERITY[0] = True
+    try:
+        at = submit_claim(fresh(), "Not towed", [("Hood (bonnet)", "Dent")])
+        a = at.session_state["claims"][0]["analysis"]
+        assert a["rows"][0]["severity"] is None and a["rows"][0]["sev_missing"] and a["sev_missing"] == ["Dent"]
+        assert all(x["severity"] is None for x in a["estimate"])
+        at.button(key="vtab_insurance").click().run()
+        t = text(at)
+        assert "Severity unavailable for Dent" in t and "No score" in t and "Unreliable" in t
+    finally:
+        NO_SEVERITY[0] = False
