@@ -47,7 +47,7 @@ def submit_claim(at, mode, items):
         if mode == "Towed":
             at.segmented_control(key="cl_act").set_value(detail)
         else:
-            at.selectbox(key="cl_dmg").set_value(detail)
+            at.multiselect(key="cl_dmg").set_value([detail]).run()
         at.button(key="cl_add").click().run()
     cl = at.session_state["cl"]
     for n, it in enumerate(cl["items"][mode]):
@@ -136,7 +136,7 @@ def test_opens_on_client_tab_with_hero_and_switches():
 
 def test_client_lists_survive_tab_switch_and_mode_switch():
     at = fresh()
-    at.selectbox(key="cl_part").set_value("Hood"); at.button(key="cl_add").click().run()
+    at.selectbox(key="cl_part").set_value("Hood"); at.multiselect(key="cl_dmg").set_value(["Dent"]).run(); at.button(key="cl_add").click().run()
     at.session_state["cl"]["mode"] = "Towed"; at.run()
     at.selectbox(key="cl_part").set_value("Roof"); at.button(key="cl_add").click().run()
     at.button(key="vtab_insurance").click().run(); at.button(key="vtab_client").click().run()
@@ -148,36 +148,57 @@ def test_client_lists_survive_tab_switch_and_mode_switch():
 def test_client_cannot_continue_or_submit_without_items_and_photos():
     at = fresh()
     assert at.button(key="cl_to_photos").disabled
+    assert at.button(key="cl_add").disabled                      # no damage type chosen yet
+    at.multiselect(key="cl_dmg").set_value(["Dent"]).run()
+    assert not at.button(key="cl_add").disabled
     at.button(key="cl_add").click().run()
     at.button(key="cl_to_photos").click().run()
     assert at.button(key="cl_submit").disabled
 
 
-def test_same_photo_can_be_used_for_several_damages():
+def test_one_part_several_damages_share_one_photo():
     at = fresh()
-    for p, d in (("Front bumper", "Scratch"), ("Front bumper", "Dent"), ("Hood", "Dent")):
-        at.selectbox(key="cl_part").set_value(p); at.selectbox(key="cl_dmg").set_value(d)
-        at.button(key="cl_add").click().run()
-    cl = at.session_state["cl"]; same = scene(1)
-    for n, it in enumerate(cl["items"]["Not towed"]):
-        it["data"] = same; it["pseq"] = n + 1
+    at.selectbox(key="cl_part").set_value("Front bumper")
+    at.multiselect(key="cl_dmg").set_value(["Scratch", "Dent", "Torn"]).run(); at.button(key="cl_add").click().run()
+    at.selectbox(key="cl_part").set_value("Hood")
+    at.multiselect(key="cl_dmg").set_value(["Dent"]).run(); at.button(key="cl_add").click().run()
+    cl = at.session_state["cl"]; items = cl["items"]["Not towed"]
+    assert [(i["panel"], i["detail"]) for i in items] == [("Front bumper", "Scratch"), ("Front bumper", "Dent"), ("Front bumper", "Torn"), ("Hood", "Dent")]
+    assert len({i["gid"] for i in items}) == 2                   # two parts -> two photos
     at.button(key="cl_to_photos").click().run()
-    assert "looks the same" not in text(at) and not at.button(key="cl_submit").disabled
+    assert "0 of 2 ready" in text(at) and at.button(key="cl_submit").disabled
+    for i in items:                                              # what attaching a photo does: every damage on the part gets it
+        if i["panel"] == "Front bumper":
+            i.update(data=scene(1), pseq=1)
+        else:
+            i.update(data=scene(2), pseq=2)
+    at.run()
+    assert "2 of 2 ready" in text(at) and not at.button(key="cl_submit").disabled
     at.button(key="cl_submit").click().run()
-    assert "C-001" in text(at)
+    claim = at.session_state["claims"][0]
+    assert len(claim["items"]) == 4 and claim["items"][0]["data"] == claim["items"][2]["data"]
 
 
-def test_reuse_button_copies_a_photo_onto_another_item():
+def test_adding_a_damage_to_a_part_that_has_a_photo_reuses_it():
     at = fresh()
-    for d in ("Scratch", "Dent"):
-        at.selectbox(key="cl_dmg").set_value(d); at.button(key="cl_add").click().run()
-    first, second = at.session_state["cl"]["items"]["Not towed"]
-    first["data"] = scene(5); first["pseq"] = 1
+    at.multiselect(key="cl_dmg").set_value(["Dent"]).run(); at.button(key="cl_add").click().run()
+    first = at.session_state["cl"]["items"]["Not towed"][0]; first.update(data=scene(3), pseq=1)
+    at.multiselect(key="cl_dmg").set_value(["Scratch"]).run(); at.button(key="cl_add").click().run()
+    second = at.session_state["cl"]["items"]["Not towed"][1]
+    assert second["gid"] == first["gid"] and second["data"] == first["data"]
+
+
+def test_same_photo_button_copies_a_photo_onto_another_part():
+    at = fresh()
+    for p in ("Hood", "Roof"):
+        at.selectbox(key="cl_part").set_value(p); at.multiselect(key="cl_dmg").set_value(["Dent"]).run(); at.button(key="cl_add").click().run()
+    hood, roof = at.session_state["cl"]["items"]["Not towed"]
+    hood.update(data=scene(5), pseq=1)
     at.button(key="cl_to_photos").click().run()
-    at.segmented_control(key=f"cl_src_{second['id']}").set_value("Same photo").run()
-    at.button(key=f"cl_ruse_{second['id']}").click().run()
+    at.segmented_control(key=f"cl_src_{roof['id']}").set_value("Same photo").run()
+    at.button(key=f"cl_ruse_{roof['id']}").click().run()
     assert not at.exception
-    assert at.session_state["cl"]["items"]["Not towed"][1]["data"] == first["data"]
+    assert at.session_state["cl"]["items"]["Not towed"][1]["data"] == hood["data"]
     assert not at.button(key="cl_submit").disabled
 
 
@@ -193,7 +214,7 @@ def test_submit_shows_success_with_reference_and_no_model_output():
 def test_client_lists_use_backend_parts_and_detectors(backend):
     at = fresh()
     assert at.selectbox(key="cl_part").options == ["Hood (bonnet)", "Front door"]
-    assert at.selectbox(key="cl_dmg").options == ["Dent", "Scratch"]
+    assert at.multiselect(key="cl_dmg").options == ["Dent", "Scratch"]
 
 
 # ---------------- insurance side ----------------
@@ -351,7 +372,7 @@ def test_backend_damage_labels_map_to_local_types():
 
 def test_damage_guide_is_at_the_top_and_examples_show_only_when_opened():
     at = fresh()
-    at.selectbox(key="cl_dmg").set_value("Scratch").run()
+    at.multiselect(key="cl_dmg").set_value(["Scratch"]).run()
     assert not at.exception and len(at.get("image")) == 0           # nothing inline until the guide is opened
     assert at.button(key="cl_guide")
     at.button(key="cl_guide").click().run()
