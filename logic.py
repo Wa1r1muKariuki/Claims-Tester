@@ -67,16 +67,6 @@ def find_example(damage, variant=0):
 
 # ---------------- image validity ----------------
 MAX_BYTES = 12 * 1024 * 1024
-DUP_BITS = 5
-
-
-def ahash(im):
-    g = np.asarray(im.convert("L").resize((8, 8), Image.LANCZOS), dtype=np.float32)
-    return int("".join("1" if b else "0" for b in (g > g.mean()).flatten()), 2)
-
-
-def hamming(a, b):
-    return bin(a ^ b).count("1")
 
 
 def check_single(data: bytes, min_short=100, min_long=100):
@@ -84,13 +74,13 @@ def check_single(data: bytes, min_short=100, min_long=100):
     'soft' can be overridden by the user."""
     blocking, soft = [], []
     if len(data) > MAX_BYTES:
-        return {"blocking": ["file is larger than 12 MB"], "soft": [], "hash": None, "size": None}
+        return {"blocking": ["file is larger than 12 MB"], "soft": [], "size": None}
     try:
         Image.open(io.BytesIO(data)).verify()
         im = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
     except Exception:
         return {"blocking": ["not a readable image (corrupt or unsupported file)"], "soft": [],
-                "hash": None, "size": None}
+                "size": None}
     w, h = im.size
     if min(w, h) < min_short or max(w, h) < min_long:
         blocking.append(f"resolution too low ({w}x{h}); need at least {min_long}x{min_short}")
@@ -110,7 +100,7 @@ def check_single(data: bytes, min_short=100, min_long=100):
             blocking.append("Photo is too dark. Please don't upload it; retake in better light.")
         elif mean > 215:
             blocking.append("Photo is overexposed. Please don't upload it; retake away from glare.")
-    return {"blocking": blocking, "soft": soft, "hash": ahash(im), "size": (w, h)}
+    return {"blocking": blocking, "soft": soft, "size": (w, h)}
 
 
 # ---------------- demo-mode stand-ins (used only when no backend is connected) ----------------
