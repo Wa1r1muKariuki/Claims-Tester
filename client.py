@@ -94,14 +94,46 @@ def _set_mode():
         ss.cl["mode"] = v
 
 
+def _gid(i):
+    return i.get("gid", i["id"])
+
+
+def _group(lst, iid):
+    """All items that share a photo with item `iid` (same vehicle part)."""
+    t = next((i for i in lst if i["id"] == iid), None)
+    return [i for i in lst if t and _gid(i) == _gid(t)]
+
+
+def _groups(items):
+    """Items grouped by vehicle part, in the order they were added. One group = one photo."""
+    out = {}
+    for i in items:
+        out.setdefault(_gid(i), []).append(i)
+    return list(out.values())
+
+
 def _add(m):
+    """Add one item per selected damage type. Items on the same vehicle part share one photo."""
     part = ss.get("cl_part") or CFG["panels"][0]
-    detail = (ss.get("cl_act") or "Repair") if m == "Towed" else (ss.get("cl_dmg") or CFG["damages"][0])
+    if m == "Towed":
+        details = [ss.get("cl_act") or "Repair"]
+    else:
+        sel = ss.get("cl_dmg") or []
+        details = list(sel) if isinstance(sel, (list, tuple)) else [sel]
     lst = ss.cl["items"][m]
-    if any(i["panel"] == part and i["detail"] == detail for i in lst):
-        return
-    ss.cl["seq"] += 1
-    lst.append({"id": ss.cl["seq"], "panel": part, "part_id": CFG["part_ids"].get(part), "detail": detail, "data": None, "pseq": 0, "accepted": False, "n": 0})
+    peer = next((i for i in lst if i["panel"] == part), None)
+    for detail in details:
+        if any(i["panel"] == part and i["detail"] == detail for i in lst):
+            continue
+        ss.cl["seq"] += 1
+        it = {"id": ss.cl["seq"], "gid": _gid(peer) if peer else ss.cl["seq"], "panel": part, "part_id": CFG["part_ids"].get(part),
+              "detail": detail, "data": None, "pseq": 0, "accepted": False, "n": 0}
+        if peer:   # the part already has a photo (or is waiting for one): the new damage uses it too
+            it.update(data=peer["data"], pseq=peer["pseq"], accepted=peer["accepted"], n=peer["n"])
+        lst.append(it)
+        peer = peer or it
+    if m != "Towed":
+        ss.cl_dmg = []   # ready for the next part
 
 
 def _remove(m, iid):
@@ -113,27 +145,24 @@ def _step(m, n):
 
 
 def _drop_photo(m, iid):
-    for i in ss.cl["items"][m]:
-        if i["id"] == iid:
-            i.update(data=None, accepted=False, n=i["n"] + 1)
+    for i in _group(ss.cl["items"][m], iid):
+        i.update(data=None, accepted=False, n=i["n"] + 1)
 
 
 def _reuse(m, iid, src_id):
-    """Copy an already-attached photo onto another item, so one photo can cover several damages."""
+    """Copy the photo of another part onto this part (every damage listed on it)."""
     lst = ss.cl["items"][m]
     src = next((i for i in lst if i["id"] == src_id), None)
     if not src or not src["data"]:
         return
     ss.cl["pseq"] += 1
-    for i in lst:
-        if i["id"] == iid:
-            i.update(data=src["data"], pseq=ss.cl["pseq"], accepted=False, n=i["n"] + 1)
+    for i in _group(lst, iid):
+        i.update(data=src["data"], pseq=ss.cl["pseq"], accepted=False, n=i["n"] + 1)
 
 
 def _accept(m, iid):
-    for i in ss.cl["items"][m]:
-        if i["id"] == iid:
-            i["accepted"] = bool(ss.get(f"cl_acc_{iid}"))
+    for i in _group(ss.cl["items"][m], iid):
+        i["accepted"] = bool(ss.get(f"cl_acc_{iid}"))
 
 
 def _submit(m):
@@ -167,23 +196,23 @@ def _head(step, labels):
 def _list_step(m, towed, items):
     with st.container(key="card_cl_form"):
         title = (f"**{'Parts to fix' if towed else 'Damaged parts'}**  \n<span class='hint'>"
-                 f"{'Choose each part and whether it needs repair or replacement.' if towed else 'Choose each part and the type of damage.'}</span>")
+                 f"{'Choose each part and whether it needs repair or replacement.' if towed else 'Choose a part, then every type of damage on it. You add one photo per part.'}</span>")
         if towed:
             st.markdown(title, unsafe_allow_html=True)
         else:
             h1, h2 = st.columns([4, 1.3], vertical_alignment="center")
             h1.markdown(title, unsafe_allow_html=True)
             if h2.button("Damage guide", icon=":material/help:", key="cl_guide"):   # opens only when clicked
-                _guide(L.local_damage(ss.get("cl_dmg")) or L.DAMAGES[0])
+                _guide(L.local_damage((ss.get("cl_dmg") or [None])[0]) or L.DAMAGES[0])
         c1, c2, c3 = st.columns([3, 3, 1.4], vertical_alignment="bottom")
         c1.selectbox("Vehicle part", CFG["panels"], key="cl_part")
         if towed:
             c2.segmented_control("Repair or replace", ACTIONS, default="Repair", key="cl_act")
         else:
-            dmg = c2.selectbox("Damage type", CFG["damages"], key="cl_dmg")
-        c3.button("Add", icon=":material/add:", key="cl_add", type="primary", on_click=_add, args=(m,))
+            dmg = c2.multiselect("Damage type (choose one or more)", CFG["damages"], key="cl_dmg", placeholder="Choose damage types")
+        c3.button("Add", icon=":material/add:", key="cl_add", type="primary", on_click=_add, args=(m,), disabled=not towed and not dmg)
         if not towed:
-            st.caption(_info(dmg))
+            st.caption(" ".join(_info(d) for d in dmg))
         st.markdown("<div class='mc-h' style='margin-top:1rem'>Your list</div>", unsafe_allow_html=True)
         if not items:
             st.markdown("<div class='mc-empty'>Nothing added yet.</div>", unsafe_allow_html=True)
@@ -197,22 +226,25 @@ def _list_step(m, towed, items):
 
 def _photo_step(m, items):
     stat = _statuses(items)
+    groups = _groups(items)   # one photo per vehicle part; it covers every damage listed on that part
 
-    def good(it):
-        s = stat.get(it["id"])
+    def good(g):
+        it, s = g[0], stat.get(g[0]["id"])
         return bool(s) and not s["blocking"] and (not s["soft"] or it["accepted"])
 
-    ready = sum(good(i) for i in items)
-    st.markdown(f"<div class='prog' style='border:0;margin-top:0;padding-top:0'><span>Attach one clear photo for each item</span>"
-                f"<span style='color:var(--accent)'>{ready} of {len(items)} ready</span></div>", unsafe_allow_html=True)
+    ready = sum(good(g) for g in groups)
+    st.markdown(f"<div class='prog' style='border:0;margin-top:0;padding-top:0'><span>Attach one clear photo for each part</span>"
+                f"<span style='color:var(--accent)'>{ready} of {len(groups)} ready</span></div>", unsafe_allow_html=True)
     cols = st.columns(2)
-    for n, it in enumerate(items):
+    for n, g in enumerate(groups):
+        it = g[0]
         iid, s = it["id"], stat.get(it["id"])
+        details = ", ".join(x["detail"] for x in g)
         blocked = bool(s and s["blocking"])
-        ok = good(it)
+        ok = good(g)
         with cols[n % 2], st.container(key=f"card_cl_{iid}"):
             st.markdown(f"<div class='ph-head'><span class='badge'>{n + 1}</span><div><b>{e(it['panel'])}</b><br>"
-                        f"<span class='hint'>{e(it['detail'])}</span></div>{'<span class=tick>✓</span>' if ok else ''}</div>", unsafe_allow_html=True)
+                        f"<span class='hint'>{e(details)}</span></div>{'<span class=tick>✓</span>' if ok else ''}</div>", unsafe_allow_html=True)
             if it["data"] and not blocked:
                 st.image(it["data"])
             else:
@@ -229,14 +261,14 @@ def _photo_step(m, items):
             if it["data"]:
                 st.button("Replace photo", icon=":material/refresh:", key=f"cl_rp_{iid}", on_click=_drop_photo, args=(m, iid))
             else:
-                donors = [o for o in items if o["data"] and o["id"] != iid and not (stat.get(o["id"]) or {}).get("blocking")]
+                donors = [o[0] for o in groups if o[0]["data"] and o[0]["id"] != iid and not (stat.get(o[0]["id"]) or {}).get("blocking")]
                 mode = st.segmented_control("Source", ["Upload", "Camera"] + (["Same photo"] if donors else []), default="Upload",
                                             key=f"cl_src_{iid}", label_visibility="collapsed")
                 k = f"{iid}_{it['n']}"
                 f = None
                 if mode == "Same photo" and donors:
                     src = st.selectbox("Photo from", [d["id"] for d in donors], key=f"cl_ru_{k}", label_visibility="collapsed",
-                                       format_func=lambda i: next(f"{d['panel']} · {d['detail']}" for d in donors if d["id"] == i))
+                                       format_func=lambda i: next(d["panel"] for d in donors if d["id"] == i))
                     st.button("Use this photo", icon=":material/content_copy:", key=f"cl_ruse_{iid}", on_click=_reuse, args=(m, iid, src))
                 elif mode == "Camera":
                     f = st.camera_input(f"{it['panel']} photo", key=f"cl_cam_{k}", label_visibility="collapsed")
@@ -245,14 +277,15 @@ def _photo_step(m, items):
                                          key=f"cl_up_{k}", label_visibility="collapsed")
                 if f is not None:
                     ss.cl["pseq"] += 1
-                    it.update(data=f.getvalue(), pseq=ss.cl["pseq"], accepted=False, n=it["n"] + 1)
+                    for x in g:
+                        x.update(data=f.getvalue(), pseq=ss.cl["pseq"], accepted=False, n=x["n"] + 1)
                     st.rerun()
     b1, b2 = st.columns(2)
     b1.button("Back", icon=":material/arrow_back:", key="cl_back", on_click=_step, args=(m, 0))
     b2.button("Submit claim", icon=":material/check:", icon_position="right", key="cl_submit", type="primary",
-              disabled=not (items and ready == len(items)), on_click=_submit, args=(m,))
-    if ready != len(items):
-        st.markdown("<div class='hint' style='color:var(--warn)'>Add an accepted photo for every item to submit.</div>", unsafe_allow_html=True)
+              disabled=not (items and ready == len(groups)), on_click=_submit, args=(m,))
+    if ready != len(groups):
+        st.markdown("<div class='hint' style='color:var(--warn)'>Add an accepted photo for every part to submit.</div>", unsafe_allow_html=True)
 
 
 def _success(m, done):
