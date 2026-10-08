@@ -546,6 +546,74 @@ def clean_summary(x):
     return re.sub(r"^\s*needs review\s*(→|->)?\s*human adjuster\s*:?\s*", "", str(x or ""), flags=re.I).strip()
 
 
+def _cell(key, v):
+    """One JSON value as readable table text. Risk-like numbers become %, severity stays /100, lists are joined."""
+    k = str(key).lower()
+    if v is None or v == "":
+        return "—"
+    if isinstance(v, bool):
+        return "Yes" if v else "No"
+    if isinstance(v, (int, float)):
+        if any(w in k for w in ("risk", "prob", "conf")):
+            return pct(unit(v))
+        if "sever" in k:
+            return f"{round(v)}/100"
+        return f"{v:g}"
+    if isinstance(v, (list, tuple)):
+        return ", ".join(_cell(key, x) for x in v) or "—"
+    if isinstance(v, dict):
+        return "; ".join(f"{pretty(a)}: {_cell(a, b)}" for a, b in v.items()) or "—"
+    return pretty(v) if str(v).isupper() or "_" in str(v) else str(v)
+
+
+HEAD_NAMES = {"system": "System", "risk": "Risk", "part_id": "Part ID", "part_name": "Part", "part": "Part", "label": "Part",
+              "severity": "Severity", "fix_type": "Fix", "reason": "Why"}
+
+
+def list_table(title, rows, first=None):
+    """Render a list of dicts (or plain values) as a table. Columns come from the keys; `first` lists keys to show first."""
+    rows = [r for r in rows or [] if r not in (None, "")]
+    if not rows:
+        return False
+    if not all(isinstance(r, dict) for r in rows):
+        live_table(title, ["Item"], [[e(_cell("", r))] for r in rows])
+        return True
+    keys = list(dict.fromkeys(k for r in rows for k in r))
+    keys.sort(key=lambda k: (first or []).index(k) if k in (first or []) else len(first or []))
+    live_table(title, [HEAD_NAMES.get(k, pretty(k)) for k in keys], [[e(_cell(k, r.get(k))) for k in keys] for r in rows])
+    return True
+
+
+def render_hidden_details(hd, cid):
+    """Readable version of the hidden-damage JSON: overview, then one table per sub-section (systems, parts, estimate)."""
+    likely = bool(hd.get("hidden_damage_likely"))
+    risk = risk_pct(hd)
+    overview = [
+        ("Verdict", pretty(hd.get("verdict")) if hd.get("verdict") else "—", "The model's overall call on this claim."),
+        ("Hidden damage likely?", "Yes" if likely else "No", "Yes means an adjuster should look beyond the visible damage."),
+        ("Risk score", pct(risk), "Chance of damage you cannot see in the photos."),
+        ("Alert threshold", _cell("risk", hd.get("gate")) if hd.get("gate") is not None else "—", "Risk at or above this triggers the 'likely' flag."),
+        ("Impact zone", str(hd.get("zone_name") or pretty(hd.get("zone")) or "—"), "Area of the vehicle that took the hit."),
+        ("Damage lines", _cell("n", hd.get("n_lines")), "Damaged items that fed the assessment."),
+        ("Lines to repair", _cell("n", hd.get("n_repair")), "How many of those are repairs rather than replacements."),
+        ("Summary", str(hd.get("summary") or "—"), ""),
+    ]
+    live_table("Hidden damage: overview", ["Field", "Value", "What it means"], [[f"<b>{e(a)}</b>", e(b), e(c)] for a, b, c in overview])
+
+    shown = {"verdict", "hidden_damage_likely", "probability", "claim_risk", "gate", "zone", "zone_name", "n_lines", "n_repair", "summary",
+             "check_first", "risk_by_system", "hidden_parts", "estimate", "damages_considered"}
+    list_table("Check first (highest-risk systems)", hd.get("check_first"), ["system", "risk"])
+    list_table("Risk by system (all systems)", hd.get("risk_by_system"), ["system", "risk"])
+    list_table("Parts that may be damaged but not visible", hd.get("hidden_parts"), ["part_name", "part", "label", "system", "risk"])
+    list_table("Repair estimate (parts)", hd.get("estimate"), ["part_name", "part_id", "severity", "fix_type"])
+    list_table("Damages considered", hd.get("damages_considered"))
+    extra = {k: v for k, v in hd.items() if k not in shown and v not in (None, "", [], {})}
+    if extra:
+        live_table("Other details", ["Field", "Value"], [[f"<b>{e(pretty(k))}</b>", e(_cell(k, v))] for k, v in extra.items()])
+    if st.toggle("Show raw JSON", key=f"rawjson_{cid}"):
+        st.json(hd)
+
+
 def render_hidden(cid, a):
     hd, note = a.get("hidden"), a.get("hidden_note")
     with st.container(key=f"card_hidden_{cid}"):
@@ -559,7 +627,7 @@ def render_hidden(cid, a):
             if first:
                 st.markdown("**Check first:** " + ", ".join(f"{e(x['system'])} ({pct(unit(x.get('risk')))})" for x in first), unsafe_allow_html=True)
             with st.expander("Details"):
-                st.json(hd)
+                render_hidden_details(hd, cid)
         else:
             st.markdown("<div class='note'>Not assessed. No hidden-damage assessment came back for this claim.</div>", unsafe_allow_html=True)
         if note:
