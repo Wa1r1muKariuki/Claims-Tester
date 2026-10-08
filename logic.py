@@ -104,27 +104,38 @@ def check_single(data: bytes, min_short=100, min_long=100):
 
 
 # ---------------- demo-mode stand-ins (used only when no backend is connected) ----------------
+BOX_COLORS = [(239, 68, 68), (37, 99, 235), (234, 138, 0), (124, 58, 237), (5, 150, 105), (219, 39, 119)]
+
+
+def mock_annotate(data, marks):
+    """Demo-mode annotated photo: one box per damage on a single image. marks = [(label, confidence, (x0, y0, x1, y1) as fractions)]. Returns JPEG bytes."""
+    img = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
+    W, H = img.size
+    d = ImageDraw.Draw(img)
+    for n, (label, conf, (x0, y0, x1, y1)) in enumerate(marks):
+        col = BOX_COLORS[n % len(BOX_COLORS)]
+        box = [x0 * W, y0 * H, x1 * W, y1 * H]
+        d.rectangle(box, outline=col, width=max(3, W // 250))
+        d.text((box[0] + 4, box[1] + 4), f"{label} {conf:.0%}", fill=col)
+    img.thumbnail((900, 900))
+    b = io.BytesIO()
+    img.save(b, "JPEG", quality=80)
+    return b.getvalue()
+
+
 def mock_minor_check(damage_type, data, threshold=None):
-    """Shaped like the backend's /journeys/minor/check response. Deterministic per photo."""
+    """Shaped like the backend's /journeys/minor/check response. Deterministic per photo. (`box` is a demo-only extra.)"""
     rng = random.Random(hashlib.md5(damage_type.encode() + data).hexdigest())
     thr = 0.5 if threshold is None else float(threshold)
     conf = round(rng.uniform(0.25, 0.96), 2)
     others = [d for d in DAMAGES if d != damage_type and rng.random() < 0.12][:1]
     sev = round(rng.uniform(15, 90))
-    img = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
-    W, H = img.size
     x, y = rng.uniform(0.15, 0.5), rng.uniform(0.15, 0.5)
-    box = [x * W, y * H, (x + 0.3) * W, (y + 0.3) * H]
-    d = ImageDraw.Draw(img)
-    d.rectangle(box, outline=(239, 68, 68), width=max(3, W // 250))
-    d.text((box[0] + 4, box[1] + 4), f"{damage_type} {conf:.0%}", fill=(239, 68, 68))
-    img.thumbnail((900, 900))
-    b = io.BytesIO()
-    img.save(b, "JPEG", quality=80)
+    box = (x, y, x + 0.3, y + 0.3)
     return {"damage_type": damage_type, "label": damage_type, "confirmed": conf >= thr, "available": True, "error": None,
-            "max_conf": conf, "thr": thr, "other_damage": others, "quality": {},
+            "max_conf": conf, "thr": thr, "other_damage": others, "quality": {}, "box": box,
             "severity": {"ok": True, "configured": False, "composite": sev}, "fix_type": "replace" if sev > 70 else "repair",
-            "image_jpeg_b64": base64.b64encode(b.getvalue()).decode()}
+            "image_jpeg_b64": base64.b64encode(mock_annotate(data, [(damage_type, conf, box)])).decode()}
 
 
 def mock_hidden_damage(findings):
