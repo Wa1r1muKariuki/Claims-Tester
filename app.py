@@ -283,6 +283,18 @@ def kpi_html(label, value, tone, icon, share, sel=False):
             f"<div class='lbl'>{e(label)}</div></div>{meter}</div>")
 
 
+def risk_pct(hd):
+    """Hidden-damage risk as a 0-1 fraction. Reads `probability` or `claim_risk`; values above 1 are treated as percentages."""
+    return unit(next((hd.get(k) for k in ("probability", "claim_risk") if (hd or {}).get(k) is not None), None)) if hd else None
+
+
+def unit(v):
+    if v is None:
+        return None
+    v = float(v)
+    return v / 100 if v > 1 else v
+
+
 def pct(x):
     return "—" if x is None else f"{float(x):.0%}"
 
@@ -387,7 +399,7 @@ def analyse_minor(c):
 
 
 def grade_item(it):
-    row = {"panel": it["panel"], "client": it["detail"], "model": "—", "severity": None, "image": it["data"], "status": "Needs review", "reason": ""}
+    row = {"panel": it["panel"], "part_id": it.get("part_id"), "client": it["detail"], "model": "—", "severity": None, "image": it["data"], "status": "Needs review", "reason": ""}
     try:
         r = api.severity(it["data"]) if LIVE else L.mock_severity(it["data"])
     except Exception as ex:
@@ -404,10 +416,21 @@ def grade_item(it):
 
 
 def towed_hidden(rows):
-    """Hidden-damage assessment for a towed claim, from the graded severities. Returns (assessment or None, note or None)."""
-    if LIVE:
-        return None, "The backend has no hidden-damage assessment for towed claims connected yet, so none was run."
-    return L.mock_hidden_damage([{"part": r["panel"], "damage": r["client"], "severity": r["severity"], "confirmed": r["status"] == "Matched"} for r in rows]), None
+    """Hidden-damage assessment for a towed claim, from each part's graded severity. Returns (assessment or None, note or None)."""
+    if not LIVE:
+        return L.mock_hidden_damage([{"part": r["panel"], "damage": r["client"], "severity": r["severity"], "confirmed": r["status"] == "Matched"} for r in rows]), None
+    worst = {}
+    for r in rows:   # one entry per backend part; the worst severity wins if a part is listed twice
+        if r.get("part_id") and r["severity"] is not None:
+            worst[r["part_id"]] = max(worst.get(r["part_id"], 0), min(100, max(0, r["severity"])))
+    left_out = [r["panel"] for r in rows if not (r.get("part_id") and r["severity"] is not None)]
+    if not worst:
+        return None, "Hidden damage was not assessed: no part had both a backend part id and a severity score."
+    try:
+        hd = api.hidden_assess([{"part_id": p, "severity": v} for p, v in worst.items()])
+    except Exception as ex:
+        return None, f"Hidden damage was not assessed: {ex}"
+    return hd, (f"Left out of the assessment (no severity score): {', '.join(left_out)}." if left_out else None)
 
 
 def analyse_towed(c):
@@ -418,7 +441,9 @@ def analyse_towed(c):
     return {"kind": "towed", "outcome": "needs_review" if needs else "matched",
             "summary": f"{needs} of {len(rows)} item(s) need review: the model disagrees or could not grade the photo." if needs
             else "The model agrees with the client on every item.",
-            "rows": rows, "hidden_flag": flag, "hidden": hd, "hidden_note": note, "images": [{"caption": f"{r['panel']} · {r['client']}", "image": r["image"], "note": f"Model says {r['model'].lower()}" if r["model"] != "—" else ""} for r in rows]}
+            "rows": rows, "hidden_flag": flag, "hidden": hd, "hidden_note": note, "estimate": (hd or {}).get("estimate") or [],
+            "sev_missing": [r["panel"] for r in rows if r["severity"] is None],
+            "images": [{"caption": f"{r['panel']} · {r['client']}", "image": r["image"], "note": f"Model says {r['model'].lower()}" if r["model"] != "—" else ""} for r in rows]}
 
 
 def run_inspection(cid):
@@ -528,6 +553,11 @@ def render_hidden(cid, a):
         if hd:
             likely = bool(a["hidden_flag"])
             st.markdown(f"<div class='note {'warn' if likely else 'ok'}'><b>{'Hidden damage likely found' if likely else 'No hidden damage likely'}</b> · {e(verdict_lead(hd))}{e(hd.get('summary') or '')}</div>", unsafe_allow_html=True)
+            if hd.get("zone_name"):
+                st.caption(f"Impact zone: {hd['zone_name']}" + (f" · {hd['n_lines']} damage line(s), {hd.get('n_repair', 0)} to repair" if hd.get("n_lines") is not None else ""))
+            first = [x for x in hd.get("check_first") or [] if isinstance(x, dict) and x.get("system")]
+            if first:
+                st.markdown("**Check first:** " + ", ".join(f"{e(x['system'])} ({pct(unit(x.get('risk')))})" for x in first), unsafe_allow_html=True)
             with st.expander("Details"):
                 st.json(hd)
         else:
@@ -556,6 +586,18 @@ def hidden_reason(a):
     return verdict_lead(hd) + str(hd.get("summary") or "") + (" Severity scores were missing, so this may be understated." if a.get("sev_missing") else "")
 
 
+def render_estimate(a):
+    if a.get("estimate"):
+        live_table("Repair estimate", ["Part", "Severity", "Fix"],
+                   [[e(r.get("part_name") or r.get("part_id")), sev_cell(r), e(pretty(r.get("fix_type")) if r.get("fix_type") else "—")] for r in a["estimate"]])
+
+
+def render_sev_missing(a):
+    if a.get("sev_missing"):
+        st.markdown(f"<div class='note bad'>Severity unavailable for {e(', '.join(a['sev_missing']))}. The severity model returned no score, "
+                    "so Fix and the hidden-damage result may be unreliable.</div>", unsafe_allow_html=True)
+
+
 def render_results(cid, a):
     bad = "review" in a["outcome"]
     st.markdown(f"<div class='banner {'bad' if bad else 'ok'}'><div><h3>{e(pretty(a['outcome']))}</h3><p>{e(clean_summary(a['summary']))}</p></div></div>", unsafe_allow_html=True)
@@ -563,20 +605,18 @@ def render_results(cid, a):
         live_table("Declared damage vs model", ["Parts", "Damage", "Confidence", "Severity", "Fix", "Status", "Reason"],
                    [[e(", ".join(r["parts"]) or "—"), e(r["damage"]), pct(r["conf"]), sev_cell(r),
                      e(r["fix"] or "—"), status_cell(r["status"]), e(r["reason"])] for r in a["rows"]]
-                   + [["<b>Whole vehicle</b>", "<b>Hidden damage</b>", pct((a.get("hidden") or {}).get("probability")), "—", "—",
+                   + [["<b>Whole vehicle</b>", "<b>Hidden damage</b>", pct(risk_pct(a.get("hidden"))), "—", "—",
                        hidden_status(a), e(hidden_reason(a))]])
-        if a.get("sev_missing"):
-            st.markdown(f"<div class='note bad'>Severity unavailable for {e(', '.join(a['sev_missing']))}. The severity model returned no score, "
-                        "so Fix and the hidden-damage result may be unreliable.</div>", unsafe_allow_html=True)
+        render_sev_missing(a)
         render_hidden(cid, a)
-        if a["estimate"]:
-            live_table("Repair estimate", ["Part", "Severity", "Fix"],
-                       [[e(r.get("part_name") or r.get("part_id")), sev_cell(r), e(pretty(r.get("fix_type")) if r.get("fix_type") else "—")] for r in a["estimate"]])
+        render_estimate(a)
     else:
         live_table("Client choice vs model", ["Part", "Client chose", "Model says", "Severity", "Status", "Reason"],
                    [[e(r["panel"]), e(r["client"]), e(r["model"]), e("—" if r["severity"] is None else f"{r['severity']}/100"), status_cell(r["status"]), e(r["reason"])] for r in a["rows"]]
-                   + [["<b>Hidden damage</b>", "—", "—", pct((a.get("hidden") or {}).get("probability")), hidden_status(a), e(hidden_reason(a))]])
+                   + [["<b>Hidden damage</b>", "—", "—", pct(risk_pct(a.get("hidden"))), hidden_status(a), e(hidden_reason(a))]])
+        render_sev_missing(a)
         render_hidden(cid, a)
+        render_estimate(a)
     imgs = [x for x in a["images"] if x["image"]]
     if imgs:
         st.markdown("### Photo findings")
