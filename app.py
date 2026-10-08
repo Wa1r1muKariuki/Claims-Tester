@@ -339,7 +339,12 @@ def analyse_minor(c):
         m.update(confirmed=all(bool(r.get("confirmed")) for _, r in lst), part_ids=sorted({it["part_id"] for it, _ in lst}),
                  severity=max(api.minor_item(r, it["part_id"], t)["severity"] for it, r in lst))
         items.append(m)
-    fin = (api.minor_finalize(items) if LIVE else L.mock_minor_finalize(items)) if items else {}
+    # the hidden-damage check must see every damage present: the ones that could not be checked, and any other damage a detector saw
+    extra = [{"part": f["parts"][0], "damage": f["damage"], "severity": None} for f in failed]
+    for it, t, r in checked:
+        extra += [{"part": it["panel"], "damage": DLABEL.get(x, x), "severity": None}
+                  for x in dict.fromkeys(norm_other(y) for y in (r.get("other_damage") or [])) if x and x != t]
+    fin = (api.minor_finalize(items) if LIVE else L.mock_minor_finalize(items, extra)) if items else {}
     rows = [{"parts": [x for x in (r.get("part_names") or []) if x], "damage": r.get("damage") or pretty(r.get("damage_type")), "conf": r.get("max_conf"),
              "severity": r.get("severity"), "fix": pretty(r.get("fix_type")), "status": r.get("status"), "reason": r.get("reason") or ""}
             for r in fin.get("rows") or []] + failed
@@ -381,7 +386,7 @@ def towed_hidden(rows):
     """Hidden-damage assessment for a towed claim, from the graded severities. Returns (assessment or None, note or None)."""
     if LIVE:
         return None, "The backend has no hidden-damage assessment for towed claims connected yet, so none was run."
-    return L.mock_hidden_damage([r["severity"] for r in rows]), None
+    return L.mock_hidden_damage([{"part": r["panel"], "damage": r["client"], "severity": r["severity"]} for r in rows]), None
 
 
 def analyse_towed(c):
