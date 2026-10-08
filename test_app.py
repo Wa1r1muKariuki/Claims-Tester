@@ -153,15 +153,32 @@ def test_client_cannot_continue_or_submit_without_items_and_photos():
     assert at.button(key="cl_submit").disabled
 
 
-def test_client_duplicate_photo_is_blocked():
+def test_same_photo_can_be_used_for_several_damages():
     at = fresh()
-    for p in ("Hood", "Roof"):
-        at.selectbox(key="cl_part").set_value(p); at.button(key="cl_add").click().run()
+    for p, d in (("Front bumper", "Scratch"), ("Front bumper", "Dent"), ("Hood", "Dent")):
+        at.selectbox(key="cl_part").set_value(p); at.selectbox(key="cl_dmg").set_value(d)
+        at.button(key="cl_add").click().run()
     cl = at.session_state["cl"]; same = scene(1)
     for n, it in enumerate(cl["items"]["Not towed"]):
         it["data"] = same; it["pseq"] = n + 1
     at.button(key="cl_to_photos").click().run()
-    assert "looks the same" in text(at) and at.button(key="cl_submit").disabled
+    assert "looks the same" not in text(at) and not at.button(key="cl_submit").disabled
+    at.button(key="cl_submit").click().run()
+    assert "C-001" in text(at)
+
+
+def test_reuse_button_copies_a_photo_onto_another_item():
+    at = fresh()
+    for d in ("Scratch", "Dent"):
+        at.selectbox(key="cl_dmg").set_value(d); at.button(key="cl_add").click().run()
+    first, second = at.session_state["cl"]["items"]["Not towed"]
+    first["data"] = scene(5); first["pseq"] = 1
+    at.button(key="cl_to_photos").click().run()
+    at.segmented_control(key=f"cl_src_{second['id']}").set_value("Same photo").run()
+    at.button(key=f"cl_ruse_{second['id']}").click().run()
+    assert not at.exception
+    assert at.session_state["cl"]["items"]["Not towed"][1]["data"] == first["data"]
+    assert not at.button(key="cl_submit").disabled
 
 
 def test_submit_shows_success_with_reference_and_no_model_output():
