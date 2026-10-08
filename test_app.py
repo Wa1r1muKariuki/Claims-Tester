@@ -260,7 +260,7 @@ def test_inspection_shows_table_hidden_damage_estimate_and_photo_findings(backen
     at.button(key="vtab_insurance").click().run()
     inspect(at)
     t = text(at)
-    for want in ("Declared damage vs model", "Confidence", "Hidden damage assessment", "Low risk", "No hidden damage likely", "Repair estimate", "Photo findings", "Hidden damage likely"):
+    for want in ("Declared damage vs model", "Confidence", "Hidden damage assessment", "Low risk", "No hidden damage likely", "Repair estimate", "Photo findings", "Not likely"):
         assert want in t, want
 
 
@@ -306,7 +306,7 @@ def test_hidden_damage_card_is_always_shown_and_demo_mode_simulates_it():
     at.button(key="vtab_insurance").click().run()
     inspect(at)
     t = text(at)
-    assert "Hidden damage assessment" in t and "Simulated in demo mode" in t and "Hidden damage likely" in t
+    assert "Hidden damage assessment" in t and "Simulated in demo mode" in t and "Whole vehicle" in t
 
 
 def test_towed_claims_get_a_hidden_damage_assessment_in_demo_mode():
@@ -315,7 +315,7 @@ def test_towed_claims_get_a_hidden_damage_assessment_in_demo_mode():
     assert c["analysis"]["hidden"] is not None and "hidden_flag" in c["analysis"]
     at.button(key="vtab_insurance").click().run()
     t = text(at)
-    assert "Hidden damage assessment" in t and "Simulated in demo mode" in t and "Hidden damage likely" in t
+    assert "Hidden damage assessment" in t and "Simulated in demo mode" in t and "<b>Hidden damage</b>" in t
 
 
 def test_towed_hidden_damage_is_flagged_not_invented_when_the_backend_cannot_assess_it(backend):
@@ -392,3 +392,41 @@ def test_minor_item_uses_a_severity_source_the_backend_accepts():
     import api
     assert api.minor_item({"severity": {"ok": False}}, 1, "dent")["severity_source"] == "manual"
     assert api.minor_item({"severity": {"ok": True, "composite": 50}}, 1, "dent")["severity_source"] == "glm"
+
+
+def test_hidden_damage_sees_every_damage_present():
+    one = L.mock_hidden_damage([{"part": "Hood", "damage": "Dent", "severity": 60}])
+    many = L.mock_hidden_damage([{"part": "Hood", "damage": "Dent", "severity": 60},
+                                 {"part": "Roof", "damage": "Scratch", "severity": None},        # declared but could not be graded
+                                 {"part": "Hood", "damage": "Smashed glass", "severity": None}])  # only seen in a photo
+    assert many["probability"] > one["probability"]
+    assert many["damages_considered"] == ["Hood · Dent", "Hood · Smashed", "Roof · Scratch"]
+    assert L.mock_hidden_damage([{"part": "Roof", "damage": "Scratch", "severity": None}]) is None   # nothing graded: cannot tell
+
+
+def test_demo_claim_hidden_damage_lists_all_declared_damages():
+    at = submit_claim(fresh(), "Not towed", [("Hood", "Dent"), ("Roof", "Scratch")])
+    hd = at.session_state["claims"][0]["analysis"]["hidden"]
+    assert {"Hood · Dent", "Roof · Scratch"} <= set(hd["damages_considered"])
+
+
+def test_photo_findings_is_one_image_per_photo_listing_all_its_damages():
+    at = fresh()
+    at.selectbox(key="cl_part").set_value("Hood")
+    at.multiselect(key="cl_dmg").set_value(["Dent", "Scratch", "Torn"]).run(); at.button(key="cl_add").click().run()
+    items = at.session_state["cl"]["items"]["Not towed"]
+    for i in items:
+        i.update(data=scene(7), pseq=1)
+    at.button(key="cl_to_photos").click().run(); at.button(key="cl_submit").click().run()
+    imgs = at.session_state["claims"][0]["analysis"]["images"]
+    assert len(imgs) == 1
+    assert all(d in imgs[0]["caption"] for d in ("Dent", "Scratch", "Torn")) and imgs[0]["note"].count("\n") >= 2
+
+
+def test_hidden_damage_depends_on_the_kind_of_damage_and_whether_it_was_confirmed():
+    def risk(damage, sev, confirmed=True):
+        return L.mock_hidden_damage([{"part": "Hood", "damage": damage, "severity": sev, "confirmed": confirmed}])
+    assert not risk("Scratch", 90)["hidden_damage_likely"]                 # surface marks rarely hide anything, however bad
+    assert risk("Dislodged", 60)["hidden_damage_likely"]                    # a part knocked out of position usually does
+    assert risk("Dent", 76)["hidden_damage_likely"] and not risk("Dent", 76, confirmed=False)["hidden_damage_likely"]
+    assert "Hood" in risk("Dent", 76)["main_driver"]
