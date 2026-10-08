@@ -283,11 +283,6 @@ def kpi_html(label, value, tone, icon, share, sel=False):
             f"<div class='lbl'>{e(label)}</div></div>{meter}</div>")
 
 
-def kpi_grid(tiles):
-    """tiles: (label, value, tone, icon, share)."""
-    st.markdown("<div class='kpis'>" + "".join(kpi_html(*t) for t in tiles) + "</div>", unsafe_allow_html=True)
-
-
 def pct(x):
     return "—" if x is None else f"{float(x):.0%}"
 
@@ -373,8 +368,6 @@ def analyse_minor(c):
     flag = bool(fin.get("hidden_damage_flag")) or bool((hd or {}).get("hidden_damage_likely"))
     return {"kind": "minor", "outcome": "needs_review" if needs else "matched",
             "summary": (fin.get("summary") if fin and not failed else None) or (f"{needs} of {len(rows)} declared damage type(s) need review." if needs else "Every declared damage type was confirmed."),
-            "stats": [("Damage types checked", len(rows), "info", "search", None), ("Needs review", needs, "warn" if needs else "ok", "alert", None),
-                      ("Hidden damage likely", "Yes" if flag else ("No" if hd is not None else "—"), "bad" if flag else ("ok" if hd is not None else "info"), "eye", None)],
             "rows": rows, "hidden_flag": flag, "hidden": hd, "hidden_note": fin.get("hidden_damage_note"),
             "estimate": fin.get("estimate") or [], "images": images}
 
@@ -400,7 +393,7 @@ def towed_hidden(rows):
     """Hidden-damage assessment for a towed claim, from the graded severities. Returns (assessment or None, note or None)."""
     if LIVE:
         return None, "The backend has no hidden-damage assessment for towed claims connected yet, so none was run."
-    return L.mock_hidden_damage([{"part": r["panel"], "damage": r["client"], "severity": r["severity"]} for r in rows]), None
+    return L.mock_hidden_damage([{"part": r["panel"], "damage": r["client"], "severity": r["severity"], "confirmed": r["status"] == "Matched"} for r in rows]), None
 
 
 def analyse_towed(c):
@@ -411,9 +404,6 @@ def analyse_towed(c):
     return {"kind": "towed", "outcome": "needs_review" if needs else "matched",
             "summary": f"{needs} of {len(rows)} item(s) need review: the model disagrees or could not grade the photo." if needs
             else "The model agrees with the client on every item.",
-            "stats": [("Items checked", len(rows), "info", "search", None), ("Needs review", needs, "warn" if needs else "ok", "alert", None),
-                      ("Model agrees", len(rows) - needs, "ok", "check", None),
-                      ("Hidden damage likely", "Yes" if flag else ("No" if hd is not None else "—"), "bad" if flag else ("ok" if hd is not None else "info"), "eye", None)],
             "rows": rows, "hidden_flag": flag, "hidden": hd, "hidden_note": note, "images": [{"caption": f"{r['panel']} · {r['client']}", "image": r["image"], "note": f"Model says {r['model'].lower()}" if r["model"] != "—" else ""} for r in rows]}
 
 
@@ -532,21 +522,37 @@ def render_hidden(cid, a):
             st.caption(note)
 
 
+def hidden_status(a):
+    """Table cell: whether hidden damage is likely, not likely, or was not assessed."""
+    if not a.get("hidden"):
+        return "<span class='s-Info'>Not assessed</span>"
+    return "<span class='s-NeedsReview'>Likely</span>" if a["hidden_flag"] else "<span class='s-Matched'>Not likely</span>"
+
+
+def hidden_reason(a):
+    hd = a.get("hidden")
+    if not hd:
+        return a.get("hidden_note") or "No hidden-damage assessment came back for this claim."
+    return verdict_lead(hd) + str(hd.get("summary") or "")
+
+
 def render_results(cid, a):
     bad = "review" in a["outcome"]
     st.markdown(f"<div class='banner {'bad' if bad else 'ok'}'><div><h3>{e(pretty(a['outcome']))}</h3><p>{e(clean_summary(a['summary']))}</p></div></div>", unsafe_allow_html=True)
-    kpi_grid(a["stats"])
     if a["kind"] == "minor":
         live_table("Declared damage vs model", ["Parts", "Damage", "Confidence", "Severity", "Fix", "Status", "Reason"],
                    [[e(", ".join(r["parts"]) or "—"), e(r["damage"]), pct(r["conf"]), e(round(r["severity"]) if r["severity"] is not None else "—"),
-                     e(r["fix"] or "—"), status_cell(r["status"]), e(r["reason"])] for r in a["rows"]])
+                     e(r["fix"] or "—"), status_cell(r["status"]), e(r["reason"])] for r in a["rows"]]
+                   + [["<b>Whole vehicle</b>", "<b>Hidden damage</b>", pct((a.get("hidden") or {}).get("probability")), "—", "—",
+                       hidden_status(a), e(hidden_reason(a))]])
         render_hidden(cid, a)
         if a["estimate"]:
             live_table("Repair estimate", ["Part", "Severity", "Fix"],
                        [[e(r.get("part_name") or r.get("part_id")), e(round(r.get("severity") or 0)), e(pretty(r.get("fix_type")))] for r in a["estimate"]])
     else:
         live_table("Client choice vs model", ["Part", "Client chose", "Model says", "Severity", "Status", "Reason"],
-                   [[e(r["panel"]), e(r["client"]), e(r["model"]), e("—" if r["severity"] is None else f"{r['severity']}/100"), status_cell(r["status"]), e(r["reason"])] for r in a["rows"]])
+                   [[e(r["panel"]), e(r["client"]), e(r["model"]), e("—" if r["severity"] is None else f"{r['severity']}/100"), status_cell(r["status"]), e(r["reason"])] for r in a["rows"]]
+                   + [["<b>Hidden damage</b>", "—", "—", pct((a.get("hidden") or {}).get("probability")), hidden_status(a), e(hidden_reason(a))]])
         render_hidden(cid, a)
     imgs = [x for x in a["images"] if x["image"]]
     if imgs:
