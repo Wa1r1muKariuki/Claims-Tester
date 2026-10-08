@@ -1,423 +1,606 @@
-import io, json, os, re, random, threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import html
+import io
+import os
+import re
 
-import pytest
-from PIL import Image, ImageDraw
-from streamlit.testing.v1 import AppTest
+import streamlit as st
 
+import api
+import client
 import logic as L
 
+st.set_page_config(page_title="Car Damage Check | Vehicle inspection", page_icon="🔍", layout="wide")
+try:  # backend settings from .streamlit/secrets.toml or Streamlit Cloud secrets
+    for _k in ("API_BASE_URL", "API_KEY"):
+        if _k in st.secrets:
+            os.environ.setdefault(_k, str(st.secrets[_k]))
+except Exception:
+    pass
 
-def scene(seed, w=1200, h=800):
-    r = random.Random(seed)
-    im = Image.new("RGB", (w, h), (120, 130, 140))
-    d = ImageDraw.Draw(im)
-    for _ in range(80):
-        x, y = r.randint(0, w), r.randint(0, h)
-        d.rectangle((x, y, x + r.randint(20, 200), y + r.randint(20, 150)), fill=tuple(r.randint(0, 255) for _ in range(3)))
-    b = io.BytesIO(); im.save(b, "JPEG", quality=90); return b.getvalue()
+LIGHT = """--bg:#f4f6f9;--card:#ffffff;--card2:#f1f4f8;--fg:#0f1a22;--mfg:#63707a;--border:#dde3e8;--accent:#00706d;
+--p1:#0a8f89;--p2:#00605d;--secondary:#dcf1f0;--glow:rgba(0,112,109,.45);--shadow:0 1px 2px rgba(15,26,34,.06),0 8px 24px -12px rgba(15,26,34,.12);
+--bad:#c13234;--ok:#00623b;--oksoft:#dcf6e5;--warn:#934f00;--warnsoft:#fff3d8;--ink:#0d1b22;--chrome:#dde1e7;"""
+DARK = """--bg:#0a1116;--card:#121c23;--card2:#19252d;--fg:#e8eff3;--mfg:#93a2ac;--border:#233340;--accent:#4fe3d5;
+--p1:#14b3a8;--p2:#0b7c75;--secondary:rgba(79,227,213,.12);--glow:rgba(20,179,168,.5);--shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px -12px rgba(0,0,0,.6);
+--bad:#ff8a8c;--ok:#5fe0a0;--oksoft:rgba(95,224,160,.12);--warn:#ffc36b;--warnsoft:rgba(255,195,107,.12);--ink:#070d11;--chrome:#05090c;"""
+
+CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@700;800&display=swap');
+:root{__VARS__ color-scheme:__SCHEME__;}
+html,body,.stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"]{background:var(--bg)!important;color:var(--fg);font-family:'DM Sans',sans-serif;}
+.stApp,[data-testid="stMain"]{overflow-x:hidden;}
+header[data-testid="stHeader"],[data-testid="stDecoration"],[data-testid="stToolbar"],#MainMenu,footer{display:none!important;}
+[data-testid="stElementContainer"]:has(style){position:absolute;height:0;width:0;overflow:hidden;margin:0;padding:0;}
+.block-container,[data-testid="stMainBlockContainer"],[data-testid="stAppViewBlockContainer"]{max-width:1240px;padding:48px 1.5rem 4rem!important;margin-top:0!important;}
+[data-testid="stAppViewContainer"]>.main,[data-testid="stMain"],section.main{padding-top:0!important;}
+[data-testid="stMainBlockContainer"]>[data-testid="stVerticalBlock"]>[data-testid="stElementContainer"]:first-child{margin-top:0;}
+h1,h2,h3,.disp{font-family:'Manrope',sans-serif!important;color:var(--fg);}
+hr{border-color:var(--border)!important;}
+:where([data-testid="stWidgetLabel"] p,[data-testid="stCheckbox"] p,[data-testid="stCaptionContainer"],[data-testid="stMarkdownContainer"] p,[data-testid="stMarkdownContainer"] li){color:var(--fg);}
+:where([data-testid="stCaptionContainer"]){color:var(--mfg);}
+
+/* ---------- hero (full bleed) ---------- */
+.hero{position:relative;overflow:hidden;width:100vw;margin-left:calc(50% - 50vw);margin-bottom:1.6rem;min-height:210px;background:var(--ink);isolation:isolate;}
+.hero img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.55;z-index:-3;}
+.hero .shade{position:absolute;inset:0;z-index:-2;background:linear-gradient(90deg,var(--ink) 0%,rgba(13,27,34,.86) 42%,rgba(13,27,34,.15) 100%),
+ radial-gradient(60% 90% at 85% 0%,rgba(20,179,168,.35),transparent 60%);}
+.hero .grid{position:absolute;inset:0;z-index:-1;opacity:.18;background-image:linear-gradient(rgba(255,255,255,.25) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.25) 1px,transparent 1px);
+ background-size:44px 44px;-webkit-mask-image:linear-gradient(180deg,#000,transparent 85%);mask-image:linear-gradient(180deg,#000,transparent 85%);}
+.hero:after{content:"";position:absolute;left:0;right:0;bottom:0;height:44px;background:linear-gradient(180deg,transparent,var(--bg));}
+.hero-in{max-width:1240px;margin:0 auto;padding:.9rem 1.5rem 2.6rem;}
+.nav{display:flex;align-items:center;min-height:38px;}
+.brand{display:flex;gap:.7rem;align-items:center;}
+.logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--p1),var(--p2));display:flex;align-items:center;justify-content:center;box-shadow:0 8px 20px -6px var(--glow);}
+.bt{font-family:'Manrope',sans-serif;font-weight:800;font-size:.85rem;line-height:1.1;color:#fff;letter-spacing:.02em;}
+.pill{display:flex;gap:.45rem;align-items:center;font-size:.74rem;font-weight:600;color:#fff;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);
+ backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:.42rem .85rem;border-radius:99px;}
+.dot{width:8px;height:8px;border-radius:50%;background:#4ade80;box-shadow:0 0 0 4px rgba(74,222,128,.25);}
+.hero .txt{padding-top:.8rem;max-width:660px;color:#fff;}
+.kick{font-size:.7rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);}
+.hero h1{color:#fff!important;font-size:2.4rem;line-height:1.08;font-weight:800;margin:.4rem 0 0;padding:0;letter-spacing:-.02em;}
+.hero h1 em{font-style:normal;background:linear-gradient(90deg,#7ff5e9,#4aa8ff);-webkit-background-clip:text;background-clip:text;color:transparent;}
+.st-key-topstatus{position:fixed;top:.65rem;right:3.7rem;z-index:1000;width:auto!important;}
+.st-key-topstatus .pill{height:34px;padding:0 .85rem;background:rgba(13,27,34,.78);border:1px solid rgba(255,255,255,.25);box-shadow:0 6px 18px -8px rgba(0,0,0,.5);}
+.st-key-theme_toggle{position:fixed;top:.65rem;right:1.2rem;z-index:1000;width:auto!important;}
+.st-key-theme_toggle button{width:34px!important;height:34px!important;min-height:34px!important;padding:0!important;border-radius:50%!important;color:#fff!important;
+ background:rgba(13,27,34,.78)!important;border:1px solid rgba(255,255,255,.3)!important;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 6px 18px -8px rgba(0,0,0,.5)!important;}
+.st-key-theme_toggle button:hover{transform:rotate(18deg) scale(1.08)!important;background:rgba(13,27,34,.95)!important;color:#fff!important;}
+.st-key-theme_toggle button *{color:#fff!important;font-size:1.05rem;}
+
+/* ---------- typography + cards ---------- */
+.stitle{font-family:'Manrope',sans-serif;font-weight:800;font-size:1.9rem;margin:.3rem 0 0;letter-spacing:-.01em;} .sub{color:var(--mfg);font-size:.92rem;margin:.3rem 0 1.2rem;}
+[class*="st-key-card"]{background:var(--card);border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow);padding:1.1rem 1.2rem;transition:border-color .2s,transform .2s;}
+[class*="st-key-card_photo"]:hover{border-color:var(--accent);transform:translateY(-2px);}
+.ph-head{display:flex;gap:.75rem;align-items:flex-start;border-bottom:1px solid var(--border);padding-bottom:.8rem;margin-bottom:.8rem;}
+.badge{width:34px;height:34px;border-radius:11px;background:var(--secondary);color:var(--accent);font-weight:700;font-size:.75rem;display:flex;align-items:center;justify-content:center;flex:none;}
+.ph-head b{font-size:.92rem;} .hint{color:var(--mfg);font-size:.75rem;} .tick{margin-left:auto;color:var(--ok);font-weight:700;}
+.ph-empty{border:1.5px dashed var(--border);background:var(--card2);border-radius:14px;height:150px;display:flex;flex-direction:column;gap:.4rem;align-items:center;justify-content:center;color:var(--mfg);font-size:.8rem;margin-bottom:.6rem;}
+.note{border-radius:12px;padding:.6rem .8rem;font-size:.78rem;line-height:1.5;margin:.5rem 0;}
+.note.bad{background:rgba(193,50,52,.1);color:var(--bad);} .note.warn{background:var(--warnsoft);color:var(--warn);} .note.ok{background:var(--oksoft);color:var(--ok);}
+.okline{color:var(--ok);font-size:.78rem;font-weight:600;margin:.4rem 0;}
+
+/* ---------- buttons ---------- */
+.stButton>button,.stDownloadButton>button,[data-testid="stFileUploaderDropzone"] button{border-radius:12px;font-weight:600;min-height:2.75rem;border:1px solid var(--border);background:var(--card);color:var(--fg);
+ box-shadow:0 1px 2px rgba(0,0,0,.06);transition:transform .15s,box-shadow .15s,border-color .15s,background .15s;}
+.stButton>button,.stDownloadButton>button{width:100%;}
+.stButton>button:hover,.stDownloadButton>button:hover,[data-testid="stFileUploaderDropzone"] button:hover{transform:translateY(-1px);border-color:var(--accent);color:var(--accent);box-shadow:0 8px 18px -10px var(--glow);}
+.stButton>button:active,.stDownloadButton>button:active{transform:translateY(0);}
+.stButton>button:focus-visible,.stDownloadButton>button:focus-visible{outline:3px solid var(--glow);outline-offset:2px;}
+.stButton>button[data-testid="stBaseButton-primary"]{background:linear-gradient(135deg,var(--p1),var(--p2));border:0;color:#fff;box-shadow:0 10px 22px -10px var(--glow);}
+.stButton>button[data-testid="stBaseButton-primary"] *{color:#fff!important;}
+.stButton>button[data-testid="stBaseButton-primary"]:hover{filter:brightness(1.08);box-shadow:0 14px 26px -10px var(--glow);}
+.stButton>button:disabled,.stDownloadButton>button:disabled{opacity:.45;transform:none;box-shadow:none;cursor:not-allowed;}
+[class*="st-key-nav_"] button,[class*="st-key-navon_"] button{border:0!important;justify-content:flex-start;height:3rem;box-shadow:none!important;border-radius:12px!important;}
+[class*="st-key-nav_"] button{background:transparent!important;color:var(--mfg)!important;}
+[class*="st-key-navon_"] button{background:var(--secondary)!important;color:var(--accent)!important;}
+[class*="st-key-navon_"] button *{color:var(--accent)!important;}
+[class*="_rm_"] button{color:var(--bad)!important;}
+[data-testid="stButtonGroup"] button,[data-testid="stSegmentedControl"] button,[data-testid^="stBaseButton-segmented"],[data-testid^="stBaseButton-pills"]{
+ background:var(--card2)!important;color:var(--fg)!important;border:1px solid var(--border)!important;border-radius:10px!important;}
+[data-testid="stButtonGroup"] button *,[data-testid="stSegmentedControl"] button *{color:inherit!important;}
+[data-testid="stButtonGroup"] button:hover{border-color:var(--accent)!important;}
+[data-testid="stButtonGroup"] button[data-testid$="Active"],[data-testid="stButtonGroup"] button[aria-checked="true"],[data-testid="stButtonGroup"] button[aria-pressed="true"],
+[data-testid$="Active"][data-testid^="stBaseButton-"]{background:var(--secondary)!important;color:var(--accent)!important;border:1px solid var(--accent)!important;font-weight:700;}
+
+/* ---------- inputs / dialogs (follow theme) ---------- */
+[data-baseweb="select"]>div{background:var(--card2)!important;border-color:var(--border)!important;border-radius:12px!important;color:var(--fg)!important;}
+[data-baseweb="select"] *{color:var(--fg)!important;}
+[data-baseweb="popover"] ul,[data-baseweb="popover"] [role="listbox"],[data-baseweb="menu"]{background:var(--card)!important;color:var(--fg)!important;}
+[data-baseweb="popover"] li:hover{background:var(--secondary)!important;}
+[data-testid="stFileUploaderDropzone"]{background:var(--card2)!important;border:1.5px dashed var(--border)!important;border-radius:14px!important;color:var(--fg)!important;}
+[data-testid="stFileUploaderDropzone"] *{color:var(--mfg);}
+[data-testid="stFileUploaderDropzone"] button *{color:inherit;}
+[data-testid="stCameraInput"]>div{border-radius:14px;overflow:hidden;background:var(--card2);}
+[data-testid="stDialog"] [role="dialog"]{background:var(--card)!important;color:var(--fg)!important;border:1px solid var(--border);border-radius:20px!important;}
+[data-testid="stDialog"] [role="dialog"] *{color:inherit;}
+[data-testid="stDialog"] [role="dialog"] .hint{color:var(--mfg);}
+[data-testid="stDialog"] [role="dialog"] button[aria-label="Close"]{color:var(--fg)!important;}
+[data-testid="stImage"] img{border-radius:12px;}
+[data-testid="stDialog"] [data-testid="stImage"] img{width:100%;aspect-ratio:4/3;object-fit:contain;background:var(--card2);border:1px solid var(--border);}
+[data-testid="stDialog"] [data-testid="stImageCaption"]{text-align:center;}
+
+/* ---------- layout blocks ---------- */
+.side-h{font-size:.68rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--mfg);margin:.4rem 0 .6rem;}
+.prog{display:flex;justify-content:space-between;font-size:.75rem;font-weight:600;margin-top:1.2rem;border-top:1px solid var(--border);padding-top:1.1rem;}
+.bar{height:7px;border-radius:9px;background:var(--card2);margin:.6rem 0;overflow:hidden;} .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--p1),var(--accent));border-radius:9px;transition:width .4s;}
+.banner{display:flex;gap:.8rem;border-radius:16px;padding:1.1rem 1.3rem;margin:1rem 0;}
+.banner.bad{background:var(--warnsoft);color:var(--warn);} .banner.ok{background:var(--oksoft);color:var(--ok);}
+.banner h3{margin:0;color:inherit!important;font-size:1.15rem;} .banner p{margin:.2rem 0 0;font-size:.85rem;color:inherit!important;}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.75rem;margin-bottom:1.2rem;}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:.9rem 1rem;box-shadow:var(--shadow);} .stat b{font-family:'Manrope',sans-serif;font-size:1.6rem;display:block;} .stat span{font-size:.75rem;color:var(--mfg);}
+.stat b.sm{font-size:.95rem;padding:.55rem 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tbl{background:var(--card);border:1px solid var(--border);border-radius:16px;overflow-x:auto;margin-bottom:.6rem;box-shadow:var(--shadow);}
+.tbl h3{margin:0;padding:.9rem 1.2rem;font-size:1rem;border-bottom:1px solid var(--border);}
+.tbl table{width:100%;border-collapse:collapse;font-size:.85rem;min-width:360px;} .tbl th{background:var(--card2);color:var(--mfg);font-size:.72rem;text-align:left;padding:.65rem 1.2rem;}
+.tbl td{padding:.7rem 1.2rem;border-top:1px solid var(--border);} .s-Matched{color:var(--ok);font-weight:600;} .s-NeedsReview{color:var(--warn);font-weight:600;} .s-Info,.s-ListedOnly{color:var(--accent);font-weight:600;}
+.tag{display:inline-block;background:var(--secondary);color:var(--accent);border-radius:99px;padding:.15rem .65rem;font-size:.78rem;font-weight:600;}
+.item{display:flex;background:var(--card2);border-radius:12px;padding:.6rem .8rem;font-size:.88rem;}
+@media(max-width:700px){.hero h1{font-size:2rem}.hero-in{padding-bottom:2.4rem}.stats{grid-template-columns:1fr}
+.st-key-topstatus .pill{width:34px;padding:0;justify-content:center}.st-key-topstatus .ptxt{display:none}}
+.mc-h{font-size:.72rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--mfg);margin:.2rem 0 .5rem;}
+.mc-empty{border:1px dashed var(--border);background:var(--card2,var(--card));border-radius:14px;padding:1.8rem 1rem;text-align:center;color:var(--mfg);font-size:.85rem;}
+.kv{display:flex;flex-wrap:wrap;gap:.3rem .9rem;font-size:.8rem;color:var(--mfg);margin:.4rem 0;} .kv b{color:var(--fg);}
+
+/* ---------- browser-style view tabs ---------- */
+.st-key-tabbar{position:fixed;top:0;left:0;right:0;z-index:999;height:48px;background:var(--chrome);padding:8px 1rem 0;border-bottom:1px solid var(--border);}
+.st-key-tabbar [data-testid="stHorizontalBlock"]{gap:0!important;flex-wrap:nowrap!important;align-items:flex-end;max-width:1240px;margin:0 auto;}
+.st-key-tabbar [data-testid="stColumn"]{width:auto!important;flex:0 0 auto!important;min-width:0!important;overflow:visible!important;}
+.st-key-tabbar [data-testid="stElementContainer"],.st-key-tabbar .stButton{overflow:visible!important;width:auto!important;}
+[class*="st-key-vtab_"] button,[class*="st-key-vtabon_"] button{position:relative;width:220px;height:40px;min-height:40px;border:0!important;border-radius:12px 12px 0 0!important;box-shadow:none!important;
+ justify-content:flex-start;padding:0 1rem;font-size:.86rem;transform:none!important;overflow:visible;}
+[class*="st-key-vtab_"] button{background:transparent!important;color:var(--mfg)!important;height:32px;min-height:32px;margin-bottom:0;border-radius:9px!important;}
+[class*="st-key-vtab_"] button:hover{background:rgba(255,255,255,.55)!important;color:var(--fg)!important;}
+[class*="st-key-vtabon_"] button{background:var(--bg)!important;color:var(--fg)!important;font-weight:700;}
+[class*="st-key-vtabon_"] button *{color:var(--fg)!important;}
+[class*="st-key-vtabon_"] button:before,[class*="st-key-vtabon_"] button:after{content:"";position:absolute;bottom:0;width:10px;height:10px;pointer-events:none;}
+[class*="st-key-vtabon_"] button:before{left:-10px;background:radial-gradient(circle at 0 0,transparent 9.5px,var(--bg) 10px);}
+[class*="st-key-vtabon_"] button:after{right:-10px;background:radial-gradient(circle at 100% 0,transparent 9.5px,var(--bg) 10px);}
+@media(max-width:700px){[class*="st-key-vtab_"] button,[class*="st-key-vtabon_"] button{width:44vw;}}
+/* ---------- hero (compact variant used on every tab) ---------- */
+.hero.sm{min-height:0;margin-top:-3rem;margin-bottom:1.4rem;}
+.hero.sm .hero-in{padding:2rem 1.5rem 3rem;}
+.hero.sm .txt{padding-top:0;max-width:720px;}
+.hero.sm h1{font-size:2.2rem;}
+.hero.sm p{margin:.6rem 0 0;font-size:.95rem;color:rgba(255,255,255,.85);}
+.chips{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1.1rem;}
+.chip{display:inline-flex;align-items:center;gap:.4rem;font-size:.74rem;font-weight:600;color:#fff;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.24);
+ backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:.35rem .85rem;border-radius:99px;}
+
+/* ---------- status tiles (kpi) ---------- */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.6rem;margin:0 0 1rem;}
+.kpi{--tone:var(--accent);position:relative;overflow:hidden;display:flex;gap:.65rem;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:14px;
+ padding:.6rem .8rem .75rem;box-shadow:var(--shadow);transition:transform .2s,border-color .2s,box-shadow .2s;}
+.kpi:before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(120% 150% at 0% 0%,color-mix(in srgb,var(--tone) 17%,transparent),transparent 62%);}
+.kpi:hover{transform:translateY(-2px);border-color:var(--tone);box-shadow:0 16px 30px -16px var(--tone);}
+.kpi .ico{position:relative;flex:none;width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+ background:linear-gradient(135deg,var(--tone),color-mix(in srgb,var(--tone) 55%,#000));box-shadow:0 10px 20px -10px var(--tone);}
+.kpi .num{position:relative;font-family:'Manrope',sans-serif;font-weight:800;font-size:1.4rem;line-height:1;letter-spacing:-.02em;color:var(--fg);}
+.kpi .num.sm{font-size:1.05rem;padding:.1rem 0;}
+.kpi .lbl{position:relative;font-size:.6rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--mfg);margin-top:.2rem;}
+.kpi .meter{position:absolute;left:0;right:0;bottom:0;height:3px;background:color-mix(in srgb,var(--tone) 14%,transparent);}
+.kpi .meter i{display:block;height:100%;width:var(--w,0%);background:var(--tone);border-radius:0 4px 4px 0;transition:width .5s;}
+.kpi.zero .num{color:var(--mfg);} .kpi.zero .ico{background:var(--card2);box-shadow:none;} .kpi.zero .ico svg{stroke:var(--mfg);}
+.kpi.sel{border-color:var(--tone);box-shadow:0 0 0 2px var(--tone);}
+[class*="st-key-kpitile_"]{position:relative;}
+[class*="st-key-kpitile_"]:hover .kpi{transform:translateY(-2px);border-color:var(--tone);box-shadow:0 16px 30px -16px var(--tone);}
+[class*="st-key-kpitile_"] [data-testid="stElementContainer"]:has(button){position:absolute;inset:0;z-index:3;margin:0;}
+[class*="st-key-kpitile_"] .stButton{height:100%;}
+[class*="st-key-kpitile_"] .stButton>button{height:100%;width:100%;opacity:0;cursor:pointer;}
+.kpi.t-info{--tone:var(--p1);} .kpi.t-warn{--tone:var(--warn);} .kpi.t-ok{--tone:var(--ok);} .kpi.t-bad{--tone:var(--bad);}
+</style>
+"""
+ss = st.session_state
+ss.setdefault("dark", False)
+ss.setdefault("view", "Client")
+ss.setdefault("claims", [])
+st.markdown(CSS.replace("__VARS__", DARK if ss.dark else LIGHT).replace("__SCHEME__", "dark" if ss.dark else "light"), unsafe_allow_html=True)
 
 
-def text(at):
-    return " ".join(m.value for m in at.markdown)
+# ---------------- backend (same lists the Client tab uses) ----------------
+@st.cache_data(ttl=300, show_spinner=False)
+def backend_health(base):
+    try:
+        return {"ok": True, **api.health()}
+    except api.ApiError as ex:
+        return {"ok": False, "error": str(ex)}
 
 
-@pytest.fixture(autouse=True)
-def demo_env():
-    """Default: no backend (an empty value also wins over .streamlit/secrets.toml)."""
-    os.environ["API_BASE_URL"] = ""
-    yield
-    os.environ.pop("API_BASE_URL", None)
+@st.cache_data(ttl=600, show_spinner=False)
+def backend_taxonomy(base):
+    try:
+        return {"parts": api.parts(), "detectors": api.detectors()}
+    except api.ApiError:
+        return {"parts": [], "detectors": []}
 
 
-def fresh(view="Client"):
-    at = AppTest.from_file("app.py", default_timeout=30)
-    at.session_state["view"] = view
-    at.run()
-    assert not at.exception, at.exception
-    return at
+BACKEND = api.enabled()
+_H = backend_health(api.base_url()) if BACKEND else None
+_T = backend_taxonomy(api.base_url()) if (_H and _H["ok"]) else {"parts": [], "detectors": []}
+PART_ID = {(p.get("label") or p.get("part_name")): p["part_id"] for p in _T["parts"]}
+LIVE = bool(_H and _H["ok"] and PART_ID)
+PANEL_OPTIONS = list(PART_ID) if LIVE else L.PANELS
+PID = PART_ID if LIVE else {p: i + 1 for i, p in enumerate(L.PANELS)}
+DEFAULT_LABEL = {"Scratch": "Scratch", "Dent": "Dent", "Dislodged": "Dislodged", "Torn": "Torn",
+                 "Smashed": "Smashed glass", "Broken": "Broken lamp"}
+DTYPES = [(d["key"], d.get("label") or d["key"]) for d in _T["detectors"]] if (LIVE and _T["detectors"]) else list(DEFAULT_LABEL.items())
+DLABEL = dict(DTYPES)
 
 
-def submit_claim(at, mode, items):
-    """Drive the Client tab: add (part, detail) items, give each a distinct photo, submit."""
-    if mode == "Towed":
-        at.session_state["cl"]["mode"] = "Towed"; at.run()
-    for panel, detail in items:
-        at.selectbox(key="cl_part").set_value(panel)
-        if mode == "Towed":
-            at.segmented_control(key="cl_act").set_value(detail)
+def norm_other(x):
+    """Client damage label -> detector key."""
+    x = str(x).lower()
+    for tid, lab in DTYPES:
+        if x in (tid.lower(), lab.lower()):
+            return tid
+    return None
+
+
+def e(x):
+    return html.escape(str(x))
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def thumb(data, size=900):
+    """Downscale a photo once and cache it, so each rerun doesn't re-send full-size images to the browser."""
+    if not isinstance(data, (bytes, bytearray)):
+        return data
+    try:
+        from PIL import Image, ImageOps
+        im = ImageOps.exif_transpose(Image.open(io.BytesIO(data)))
+        im.thumbnail((size, size))
+        out = io.BytesIO()
+        im.convert("RGB").save(out, "JPEG", quality=85)
+        return out.getvalue()
+    except Exception:
+        return data
+
+
+def pretty(x):
+    s = str(x or "").replace("_", " ").strip()
+    if s.isupper():
+        s = s.lower()
+    return s[:1].upper() + s[1:]
+
+
+# ---------------- display helpers ----------------
+ICONS = {
+    "clock": "<circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/>",
+    "alert": "<path d='M12 3 2 20h20L12 3z'/><path d='M12 10v4M12 17.5v.01'/>",
+    "check": "<circle cx='12' cy='12' r='9'/><path d='m8 12 3 3 5-6'/>",
+    "x": "<circle cx='12' cy='12' r='9'/><path d='m9 9 6 6M15 9l-6 6'/>",
+    "search": "<circle cx='11' cy='11' r='7'/><path d='m21 21-4.3-4.3'/>",
+    "eye": "<path d='M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z'/><circle cx='12' cy='12' r='3'/>",
+}
+
+
+def kpi_html(label, value, tone, icon, share, sel=False):
+    """One status tile. tone: info|warn|ok|bad. share 0-1 draws a meter along the bottom, or None. sel marks the active filter."""
+    zero = isinstance(value, int) and value == 0
+    meter = f"<div class='meter'><i style='--w:{round(100 * share)}%'></i></div>" if share is not None else ""
+    return (f"<div class='kpi t-{tone}{' zero' if zero else ''}{' sel' if sel else ''}'><div class='ico'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' "
+            f"stroke-linecap='round' stroke-linejoin='round'>{ICONS[icon]}</svg></div><div><div class='num{' sm' if len(str(value)) > 4 else ''}'>{e(value)}</div>"
+            f"<div class='lbl'>{e(label)}</div></div>{meter}</div>")
+
+
+def kpi_grid(tiles):
+    """tiles: (label, value, tone, icon, share)."""
+    st.markdown("<div class='kpis'>" + "".join(kpi_html(*t) for t in tiles) + "</div>", unsafe_allow_html=True)
+
+
+def pct(x):
+    return "—" if x is None else f"{float(x):.0%}"
+
+
+def live_table(title, heads, rows):
+    th = "".join(f"<th>{e(h)}</th>" for h in heads)
+    body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows)
+    st.markdown(f"<div class='tbl'><h3>{e(title)}</h3><table><thead><tr>{th}</tr></thead><tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
+
+
+def status_cell(status):
+    return f"<span class='{'s-NeedsReview' if 'review' in str(status).lower() else 's-Matched'}'>{e(pretty(status))}</span>"
+
+
+# ---------------- claim inspection (runs only when the adjuster clicks "Run inspection") ----------------
+# Not towed: every declared damage is sent to its detector, then the checks are finalized by the backend
+#            (outcome, hidden-damage assessment, repair estimate).
+# Towed:     the severity model's Repair/Replace verdict must equal what the client chose.
+# Nothing is checked on submit. A claim stays "New" until someone runs the inspection.
+# Every item matched (and no hidden-damage flag) -> approved automatically; otherwise it waits for an adjuster.
+def analyse_minor(c):
+    checked, failed = [], []
+    for it in c["items"]:
+        t, why, r = norm_other(it["detail"]), None, None
+        if t is None:
+            why = "No detector exists for this damage type."
+        elif not it.get("part_id"):
+            why = "This part is not in the backend's parts list."
         else:
-            at.multiselect(key="cl_dmg").set_value([detail]).run()
-        at.button(key="cl_add").click().run()
-    cl = at.session_state["cl"]
-    for n, it in enumerate(cl["items"][mode]):
-        it["data"] = scene(100 + n); cl["pseq"] += 1; it["pseq"] = cl["pseq"]
-    at.button(key="cl_to_photos").click().run()
-    assert not at.button(key="cl_submit").disabled
-    at.button(key="cl_submit").click().run()
-    assert not at.exception
-    return at
-
-
-def inspect(at, cid="C-001"):
-    """A submitted claim is inspected automatically; this just checks that it was."""
-    c = next(x for x in at.session_state["claims"] if x["id"] == cid)
-    assert c["analysis"] is not None and not c.get("error"), c.get("error")
-    return at
-
-
-# ---------------- fake backend (stdlib only) ----------------
-CALLS = []   # paths the app called on the fake backend
-PARTS = [{"part_id": 7, "part_name": "hood", "label": "Hood (bonnet)"}, {"part_id": 9, "part_name": "door", "label": "Front door"}]
-DETECTORS = [{"key": "dent", "label": "Dent"}, {"key": "scratch", "label": "Scratch"}]
-
-
-class _H(BaseHTTPRequestHandler):
-    def _send(self, obj):
-        b = json.dumps(obj).encode()
-        self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b)
-
-    def do_GET(self):
-        self._send({"/api/v1/health": {"status": "ok"}, "/api/v1/hidden-damage/parts": PARTS, "/api/v1/detectors": DETECTORS}.get(self.path, {}))
-
-    def do_POST(self):
-        body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-        CALLS.append(self.path)
-        if self.path.startswith("/api/v1/journeys/minor/finalize"):
-            names = {p["part_id"]: p["label"] for p in PARTS}
-            rows = [{"damage_type": i["damage_type"], "damage": i["damage_type"].title(), "confirmed": i["confirmed"], "max_conf": i["max_conf"],
-                     "severity": i["severity"], "fix_type": "repair", "part_ids": i["part_ids"], "part_names": [names[x] for x in i["part_ids"]],
-                     "status": "matched" if i["confirmed"] else "needs_review",
-                     "reason": "confirmed" if i["confirmed"] else "declared, but not found in the photo"} for i in json.loads(body)["items"]]
-            n = sum(r["status"] != "matched" for r in rows)
-            self._send({"outcome": "needs_review" if n else "matched", "summary": f"{n} declared damage not found in the photo" if n else "All confirmed",
-                        "needs_review_count": n, "hidden_damage_flag": False, "rows": rows,
-                        "hidden_damage": {"verdict": "low_risk", "summary": "Low risk of hidden damage (18%).", "hidden_damage_likely": False},
-                        "hidden_damage_note": None,
-                        "estimate": [{"part_id": r["part_ids"][0], "part_name": r["part_names"][0], "severity": r["severity"], "fix_type": "repair"} for r in rows]})
-        elif self.path.startswith("/api/v1/journeys/minor/check"):
-            t = (re.search(rb'name="damage_type"\r\n\r\n(\w+)', body) or [None, b""])[1].decode()
-            ok = t == "dent"   # the fake model "sees" dents only
-            self._send({"damage_type": t, "label": t, "confirmed": ok, "available": True, "error": None, "max_conf": 0.9 if ok else 0.2,
-                        "thr": 0.5, "other_damage": [], "quality": {}, "severity": {"ok": True, "composite": 40}, "fix_type": "repair", "image_jpeg_b64": None})
-        elif self.path.startswith("/api/v1/severity/grade"):
-            self._send({"ok": True, "configured": True, "composite": 85, "cutoff": 70, "verdict": "REPLACE"})   # the fake model always says Replace
+            try:
+                r = api.minor_check(t, it["data"], None, True) if LIVE else L.mock_minor_check(t, it["data"], None)
+                if r.get("available") is False or r.get("error"):
+                    why = r.get("error") or "This detector is not available."
+            except Exception as ex:
+                why = str(ex)
+        if why:
+            failed.append({"parts": [it["panel"]], "damage": it["detail"], "conf": None, "severity": None, "fix": "",
+                           "status": "needs_review", "reason": why})
         else:
-            self._send({})
+            checked.append((it, t, r))
+    # one finalize item per damage type; it counts as confirmed only if every photo of that type confirmed it
+    groups = {}
+    for it, t, r in checked:
+        groups.setdefault(t, []).append((it, r))
+    items = []
+    for t, lst in groups.items():
+        best = max((r for _, r in lst), key=lambda r: r.get("max_conf") or 0)
+        m = api.minor_item(best, lst[0][0]["part_id"], t)
+        m.update(confirmed=all(bool(r.get("confirmed")) for _, r in lst), part_ids=sorted({it["part_id"] for it, _ in lst}),
+                 severity=max(api.minor_item(r, it["part_id"], t)["severity"] for it, r in lst))
+        items.append(m)
+    # the hidden-damage check must see every damage present: the ones that could not be checked, and any other damage a detector saw
+    extra = [{"part": f["parts"][0], "damage": f["damage"], "severity": None} for f in failed]
+    for it, t, r in checked:
+        extra += [{"part": it["panel"], "damage": DLABEL.get(x, x), "severity": None}
+                  for x in dict.fromkeys(norm_other(y) for y in (r.get("other_damage") or [])) if x and x != t]
+    fin = (api.minor_finalize(items) if LIVE else L.mock_minor_finalize(items, extra)) if items else {}
+    rows = [{"parts": [x for x in (r.get("part_names") or []) if x], "damage": r.get("damage") or pretty(r.get("damage_type")), "conf": r.get("max_conf"),
+             "severity": r.get("severity"), "fix": pretty(r.get("fix_type")), "status": r.get("status"), "reason": r.get("reason") or ""}
+            for r in fin.get("rows") or []] + failed
+    needs = sum("review" in str(r["status"]).lower() for r in rows)
+    # one image per photo (= per vehicle part), listing every damage checked on it
+    photos = {}
+    for it, t, r in checked:
+        photos.setdefault(it["panel"], []).append((it, t, r))
+    images = []
+    for panel, lst in photos.items():
+        data = lst[0][0]["data"]
+        names = [DLABEL.get(t, t) for _, t, _ in lst]
+        lines = [f"{DLABEL.get(t, t)}: {'Confirmed' if r.get('confirmed') else 'Not found'} · {pct(r.get('max_conf'))}" for _, t, r in lst]
+        also = [DLABEL.get(x, x) for x in dict.fromkeys(norm_other(y) for _, _, r in lst for y in (r.get("other_damage") or []))
+                if x and x not in {t for _, t, _ in lst}]
+        if also:
+            lines.append(f"Also sees: {', '.join(also)}")
+        hits = [(DLABEL.get(t, t), r) for _, t, r in lst if r.get("confirmed") and r.get("box")]
+        if not LIVE and hits:   # demo: draw every confirmed damage on the same photo
+            img = L.mock_annotate(data, [(n, r.get("max_conf") or 0, r["box"]) for n, r in hits])
+        else:               # live: the backend annotates one damage type per call, so show the strongest confirmed one
+            best = max(lst, key=lambda x: (bool(x[2].get("confirmed")), x[2].get("max_conf") or 0))[2]
+            img = api.b64_bytes(best.get("image_jpeg_b64")) or data
+        images.append({"caption": f"{panel} · {', '.join(names)}", "image": img, "note": "\n".join(lines)})
+    hd = fin.get("hidden_damage")
+    flag = bool(fin.get("hidden_damage_flag")) or bool((hd or {}).get("hidden_damage_likely"))
+    return {"kind": "minor", "outcome": "needs_review" if needs else "matched",
+            "summary": (fin.get("summary") if fin and not failed else None) or (f"{needs} of {len(rows)} declared damage type(s) need review." if needs else "Every declared damage type was confirmed."),
+            "stats": [("Damage types checked", len(rows), "info", "search", None), ("Needs review", needs, "warn" if needs else "ok", "alert", None),
+                      ("Hidden damage likely", "Yes" if flag else ("No" if hd is not None else "—"), "bad" if flag else ("ok" if hd is not None else "info"), "eye", None)],
+            "rows": rows, "hidden_flag": flag, "hidden": hd, "hidden_note": fin.get("hidden_damage_note"),
+            "estimate": fin.get("estimate") or [], "images": images}
 
-    def log_message(self, *a):
-        pass
+
+def grade_item(it):
+    row = {"panel": it["panel"], "client": it["detail"], "model": "—", "severity": None, "image": it["data"], "status": "Needs review", "reason": ""}
+    try:
+        r = api.severity(it["data"]) if LIVE else L.mock_severity(it["data"])
+    except Exception as ex:
+        row["reason"] = str(ex)
+        return row
+    verdict = pretty(r.get("verdict")) if r.get("ok", True) else ""
+    if not verdict:
+        row["reason"] = r.get("note") or "The model could not grade this photo."
+        return row
+    ok = verdict == it["detail"]
+    row.update(model=verdict, severity=None if r.get("composite") is None else round(r["composite"]), status="Matched" if ok else "Needs review",
+               reason="The model agrees with the client." if ok else f"The client chose {it['detail'].lower()}; the model suggests {verdict.lower()}.")
+    return row
 
 
-_PORT = [8740]
+def towed_hidden(rows):
+    """Hidden-damage assessment for a towed claim, from the graded severities. Returns (assessment or None, note or None)."""
+    if LIVE:
+        return None, "The backend has no hidden-damage assessment for towed claims connected yet, so none was run."
+    return L.mock_hidden_damage([{"part": r["panel"], "damage": r["client"], "severity": r["severity"]} for r in rows]), None
 
 
-@pytest.fixture
-def backend():
-    CALLS.clear()
-    _PORT[0] += 1
-    srv = HTTPServer(("127.0.0.1", _PORT[0]), _H)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    os.environ["API_BASE_URL"] = f"http://127.0.0.1:{_PORT[0]}"
-    yield
-    srv.shutdown()
+def analyse_towed(c):
+    rows = [grade_item(it) for it in c["items"]]
+    needs = sum(r["status"] != "Matched" for r in rows)
+    hd, note = towed_hidden(rows)
+    flag = bool((hd or {}).get("hidden_damage_likely"))
+    return {"kind": "towed", "outcome": "needs_review" if needs else "matched",
+            "summary": f"{needs} of {len(rows)} item(s) need review: the model disagrees or could not grade the photo." if needs
+            else "The model agrees with the client on every item.",
+            "stats": [("Items checked", len(rows), "info", "search", None), ("Needs review", needs, "warn" if needs else "ok", "alert", None),
+                      ("Model agrees", len(rows) - needs, "ok", "check", None),
+                      ("Hidden damage likely", "Yes" if flag else ("No" if hd is not None else "—"), "bad" if flag else ("ok" if hd is not None else "info"), "eye", None)],
+            "rows": rows, "hidden_flag": flag, "hidden": hd, "hidden_note": note, "images": [{"caption": f"{r['panel']} · {r['client']}", "image": r["image"], "note": f"Model says {r['model'].lower()}" if r["model"] != "—" else ""} for r in rows]}
 
 
-# ---------------- tabs ----------------
-def test_opens_on_client_tab_with_hero_and_switches():
-    at = fresh()
-    assert "Report your" in text(at) and "hero sm" in text(at)
-    assert at.button(key="vtabon_client") and at.button(key="vtab_insurance")
-    at.button(key="vtab_insurance").click().run()
-    assert not at.exception and "No claims yet" in text(at)
-    at.button(key="vtab_client").click().run()
-    assert "Report your" in text(at)
+def run_inspection(cid):
+    c = next(x for x in ss.claims if x["id"] == cid)
+    c["error"] = None
+    try:
+        a = (analyse_towed if c["mode"] == "Towed" else analyse_minor)(c)
+    except Exception as ex:
+        c["error"] = f"Inspection failed: {ex}"
+        return
+    c["analysis"] = a
+    ss.just_ran = cid   # keep this claim open so the adjuster sees the results even if it was approved automatically
+    auto = a["outcome"] == "matched" and bool(a["rows"]) and not a.get("hidden_flag")
+    c["status"], c["decided_by"] = ("Approved", "Automatic") if auto else ("Needs review", None)
 
 
-def test_client_lists_survive_tab_switch_and_mode_switch():
-    at = fresh()
-    at.selectbox(key="cl_part").set_value("Hood"); at.multiselect(key="cl_dmg").set_value(["Dent"]).run(); at.button(key="cl_add").click().run()
-    at.session_state["cl"]["mode"] = "Towed"; at.run()
-    at.selectbox(key="cl_part").set_value("Roof"); at.button(key="cl_add").click().run()
-    at.button(key="vtab_insurance").click().run(); at.button(key="vtab_client").click().run()
-    cl = at.session_state["cl"]
-    assert [i["panel"] for i in cl["items"]["Not towed"]] == ["Hood"] and [i["panel"] for i in cl["items"]["Towed"]] == ["Roof"]
+def decide(cid, status):
+    c = next(x for x in ss.claims if x["id"] == cid)
+    c["status"], c["decided_by"] = status, "Adjuster"
 
 
-# ---------------- client side ----------------
-def test_client_cannot_continue_or_submit_without_items_and_photos():
-    at = fresh()
-    assert at.button(key="cl_to_photos").disabled
-    assert at.button(key="cl_add").disabled                      # no damage type chosen yet
-    at.multiselect(key="cl_dmg").set_value(["Dent"]).run()
-    assert not at.button(key="cl_add").disabled
-    at.button(key="cl_add").click().run()
-    at.button(key="cl_to_photos").click().run()
-    assert at.button(key="cl_submit").disabled
+def autorun_pending():
+    """Inspect every submitted claim that hasn't been inspected yet. 'tried' is set only once a run finishes, so a run cut short
+    by a tab switch is retried on the next render, while a run that failed isn't repeated on every rerun (the adjuster can re-run it)."""
+    for c in ss.claims:
+        if c["analysis"] is None and c["status"] == "New" and not c.get("tried"):
+            run_inspection(c["id"])
+            c["tried"] = True
 
 
-def test_one_part_several_damages_share_one_photo():
-    at = fresh()
-    at.selectbox(key="cl_part").set_value("Front bumper")
-    at.multiselect(key="cl_dmg").set_value(["Scratch", "Dent", "Torn"]).run(); at.button(key="cl_add").click().run()
-    at.selectbox(key="cl_part").set_value("Hood")
-    at.multiselect(key="cl_dmg").set_value(["Dent"]).run(); at.button(key="cl_add").click().run()
-    cl = at.session_state["cl"]; items = cl["items"]["Not towed"]
-    assert [(i["panel"], i["detail"]) for i in items] == [("Front bumper", "Scratch"), ("Front bumper", "Dent"), ("Front bumper", "Torn"), ("Hood", "Dent")]
-    assert len({i["gid"] for i in items}) == 2                   # two parts -> two photos
-    at.button(key="cl_to_photos").click().run()
-    assert "0 of 2 ready" in text(at) and at.button(key="cl_submit").disabled
-    for i in items:                                              # what attaching a photo does: every damage on the part gets it
-        if i["panel"] == "Front bumper":
-            i.update(data=scene(1), pseq=1)
+def set_filter(k):
+    ss.status_filter = None if ss.get("status_filter") == k else k
+
+
+def set_view(v):
+    ss.view = v
+
+
+def toggle_theme():
+    ss.dark = not ss.dark
+
+
+# ---------------- view tabs (Client claim / Insurance review) ----------------
+with st.container(key="tabbar"):
+    _tc = st.columns([1, 1, 4])
+    _todo = sum(c["status"] in ("New", "Needs review") for c in ss.claims)
+    for _c, (_id, _label, _icon) in zip(_tc, [("Client", "Client claim", ":material/person:"),
+                                              ("Insurance", f"Insurance review ({_todo})" if _todo else "Insurance review", ":material/apartment:")]):
+        _c.button(_label, icon=_icon, key=f"{'vtabon' if ss.view == _id else 'vtab'}_{_id.lower()}", on_click=set_view, args=(_id,))
+with st.container(key="topstatus"):
+    st.markdown(f"<div class='pill'><span class='dot'></span><span class='ptxt'>{'Connected' if LIVE else 'Demo workspace'}</span></div>", unsafe_allow_html=True)
+with st.container(key="theme_toggle"):
+    st.button("", icon=":material/light_mode:" if ss.dark else ":material/dark_mode:", key="theme_btn", on_click=toggle_theme,
+              help="Switch to light mode" if ss.dark else "Switch to dark mode")
+
+if ss.view == "Client":
+    client.render(panels=PANEL_OPTIONS, part_ids=PID, damages=[lab for _, lab in DTYPES], live=LIVE)
+    autorun_pending()   # a submitted claim is inspected straight away, silently; the client never sees the findings
+    st.stop()
+
+# ---------------- insurance review ----------------
+claims = ss.claims
+if any(c["analysis"] is None and c["status"] == "New" and not c.get("tried") for c in claims):
+    with st.spinner("Inspecting new claims…"):
+        autorun_pending()
+count = lambda s: sum(c["status"] == s for c in claims)
+client.hero("Insurance review", "Review", "what the client declared",
+            sub="New claims are inspected automatically. Approve or reject the ones that need a decision.")
+_n = max(len(claims), 1)
+_tiles = [("New", "Awaiting inspection", "info", "clock"), ("Needs review", "Needs review", "warn", "alert"),
+          ("Approved", "Approved", "ok", "check"), ("Rejected", "Rejected", "bad", "x")]
+for _col, (_k, _lab, _tone, _ico) in zip(st.columns(4, gap="small"), _tiles):
+    with _col, st.container(key=f"kpitile_{_k.replace(' ', '').lower()}"):   # the invisible button over the tile makes it a filter
+        st.markdown(kpi_html(_lab, count(_k), _tone, _ico, count(_k) / _n, sel=ss.get("status_filter") == _k), unsafe_allow_html=True)
+        st.button(_lab, key=f"kpibtn_{_k.replace(' ', '').lower()}", on_click=set_filter, args=(_k,))
+if not claims:
+    st.markdown("<div class='mc-empty'>No claims yet. Submit one on the Client tab and it will appear here, waiting for inspection.</div>", unsafe_allow_html=True)
+    st.stop()
+
+LABEL = {"New": "Awaiting inspection"}
+
+
+def render_declared(c):
+    """What the client reported, listed before anything is checked."""
+    st.markdown(f"**{'Parts the client wants fixed' if c['mode'] == 'Towed' else 'Damage the client reported'}**")
+    for it in c["items"]:
+        a, b = st.columns([1, 5], vertical_alignment="center")
+        a.image(thumb(it["data"], 300), width="stretch")
+        b.markdown(f"<div class='item'><b>{e(it['panel'])}</b>&nbsp;·&nbsp;<span style='color:var(--mfg)'>{e(it['detail'])}</span></div>", unsafe_allow_html=True)
+
+
+def verdict_lead(hd):
+    """'Low risk. ' unless the summary already starts with it."""
+    v, summ = pretty(hd.get("verdict")), str(hd.get("summary") or "")
+    return "" if not v or summ.lower().startswith(v.lower()) else v + ". "
+
+
+def clean_summary(x):
+    """Drop the backend's 'NEEDS REVIEW →' prefix; the banner title already says it."""
+    return re.sub(r"^\s*needs review\s*(→|->)?\s*human adjuster\s*:?\s*", "", str(x or ""), flags=re.I).strip()
+
+
+def render_hidden(cid, a):
+    hd, note = a.get("hidden"), a.get("hidden_note")
+    with st.container(key=f"card_hidden_{cid}"):
+        st.markdown("**Hidden damage assessment**")
+        if hd:
+            likely = bool(a["hidden_flag"])
+            st.markdown(f"<div class='note {'warn' if likely else 'ok'}'><b>{'Hidden damage likely found' if likely else 'No hidden damage likely'}</b> · {e(verdict_lead(hd))}{e(hd.get('summary') or '')}</div>", unsafe_allow_html=True)
+            with st.expander("Details"):
+                st.json(hd)
         else:
-            i.update(data=scene(2), pseq=2)
-    at.run()
-    assert "2 of 2 ready" in text(at) and not at.button(key="cl_submit").disabled
-    at.button(key="cl_submit").click().run()
-    claim = at.session_state["claims"][0]
-    assert len(claim["items"]) == 4 and claim["items"][0]["data"] == claim["items"][2]["data"]
+            st.markdown("<div class='note'>Not assessed. No hidden-damage assessment came back for this claim.</div>", unsafe_allow_html=True)
+        if note:
+            st.caption(note)
 
 
-def test_adding_a_damage_to_a_part_that_has_a_photo_reuses_it():
-    at = fresh()
-    at.multiselect(key="cl_dmg").set_value(["Dent"]).run(); at.button(key="cl_add").click().run()
-    first = at.session_state["cl"]["items"]["Not towed"][0]; first.update(data=scene(3), pseq=1)
-    at.multiselect(key="cl_dmg").set_value(["Scratch"]).run(); at.button(key="cl_add").click().run()
-    second = at.session_state["cl"]["items"]["Not towed"][1]
-    assert second["gid"] == first["gid"] and second["data"] == first["data"]
+def render_results(cid, a):
+    bad = "review" in a["outcome"]
+    st.markdown(f"<div class='banner {'bad' if bad else 'ok'}'><div><h3>{e(pretty(a['outcome']))}</h3><p>{e(clean_summary(a['summary']))}</p></div></div>", unsafe_allow_html=True)
+    kpi_grid(a["stats"])
+    if a["kind"] == "minor":
+        live_table("Declared damage vs model", ["Parts", "Damage", "Confidence", "Severity", "Fix", "Status", "Reason"],
+                   [[e(", ".join(r["parts"]) or "—"), e(r["damage"]), pct(r["conf"]), e(round(r["severity"]) if r["severity"] is not None else "—"),
+                     e(r["fix"] or "—"), status_cell(r["status"]), e(r["reason"])] for r in a["rows"]])
+        render_hidden(cid, a)
+        if a["estimate"]:
+            live_table("Repair estimate", ["Part", "Severity", "Fix"],
+                       [[e(r.get("part_name") or r.get("part_id")), e(round(r.get("severity") or 0)), e(pretty(r.get("fix_type")))] for r in a["estimate"]])
+    else:
+        live_table("Client choice vs model", ["Part", "Client chose", "Model says", "Severity", "Status", "Reason"],
+                   [[e(r["panel"]), e(r["client"]), e(r["model"]), e("—" if r["severity"] is None else f"{r['severity']}/100"), status_cell(r["status"]), e(r["reason"])] for r in a["rows"]])
+        render_hidden(cid, a)
+    imgs = [x for x in a["images"] if x["image"]]
+    if imgs:
+        st.markdown("### Photo findings")
+        cols = st.columns(2)
+        for i, x in enumerate(imgs):
+            with cols[i % 2], st.container(key=f"card_find_{cid}_{i}"):
+                st.image(thumb(x["image"], 900))
+                st.markdown(f"<b>{e(x['caption'])}</b>" + (f"<div class='hint'>{e(x['note']).replace(chr(10), '<br>')}</div>" if x["note"] else ""), unsafe_allow_html=True)
 
 
-def test_same_photo_button_copies_a_photo_onto_another_part():
-    at = fresh()
-    for p in ("Hood", "Roof"):
-        at.selectbox(key="cl_part").set_value(p); at.multiselect(key="cl_dmg").set_value(["Dent"]).run(); at.button(key="cl_add").click().run()
-    hood, roof = at.session_state["cl"]["items"]["Not towed"]
-    hood.update(data=scene(5), pseq=1)
-    at.button(key="cl_to_photos").click().run()
-    at.segmented_control(key=f"cl_src_{roof['id']}").set_value("Same photo").run()
-    at.button(key=f"cl_ruse_{roof['id']}").click().run()
-    assert not at.exception
-    assert at.session_state["cl"]["items"]["Not towed"][1]["data"] == hood["data"]
-    assert not at.button(key="cl_submit").disabled
+def render_claim(c):
+    cid = c["id"]
+    if c["analysis"] is None:
+        render_declared(c)
+        n = len(c["items"])
+        a, b = st.columns([4, 1.3], vertical_alignment="center")
+        a.markdown(f"**Ready to inspect**  \n<span class='hint'>{n} item{'s' if n != 1 else ''}, each with a photo. Nothing has been checked yet.</span>", unsafe_allow_html=True)
+        if b.button("Run inspection", icon=":material/play_arrow:", key=f"run_{cid}", type="primary"):
+            with st.spinner("Checking the photos with the model…"):
+                run_inspection(cid)
+            st.rerun()
+        if c.get("error"):
+            st.error(c["error"])
+        if not LIVE:
+            st.caption("Demo mode: model findings are simulated until a real detection service is connected.")
+        return
+    render_results(cid, c["analysis"])
+    if not LIVE:
+        st.caption("Demo mode: model findings are simulated until a real detection service is connected.")
+    if c["status"] == "Needs review":
+        b1, b2, b3 = st.columns(3)
+        b1.button("Approve", icon=":material/check_circle:", key=f"ap_{cid}", type="primary", on_click=decide, args=(cid, "Approved"))
+        b2.button("Reject", icon=":material/cancel:", key=f"rj_{cid}", on_click=decide, args=(cid, "Rejected"))
+        rerun = b3.button("Re-run inspection", icon=":material/refresh:", key=f"rr_{cid}")
+    else:
+        st.markdown(f"<div class='hint'>{e(c['status'])} · {'matched the model, no review needed' if c['decided_by'] == 'Automatic' else 'decided by the adjuster'}</div>", unsafe_allow_html=True)
+        rerun = st.button("Re-run inspection", icon=":material/refresh:", key=f"rr_{cid}")
+    if rerun:
+        with st.spinner("Checking the photos with the model…"):
+            run_inspection(cid)
+        st.rerun()
+    if c.get("error"):
+        st.error(c["error"])
 
 
-def test_submit_shows_success_with_reference_and_no_model_output():
-    at = submit_claim(fresh(), "Not towed", [("Hood", "Dent")])
-    t = text(at)
-    assert "Success" in t and "C-001" in t
-    assert "Confidence" not in t and "Model" not in t
-    at.button(key="cl_new").click().run()
-    assert not at.exception and at.session_state["cl"]["items"]["Not towed"] == []
-
-
-def test_client_lists_use_backend_parts_and_detectors(backend):
-    at = fresh()
-    assert at.selectbox(key="cl_part").options == ["Hood (bonnet)", "Front door"]
-    assert at.multiselect(key="cl_dmg").options == ["Dent", "Scratch"]
-
-
-# ---------------- insurance side ----------------
-def test_empty_inbox():
-    assert "No claims yet" in text(fresh("Insurance"))
-
-
-def test_submitted_claim_is_inspected_automatically(backend):
-    at = submit_claim(fresh(), "Not towed", [("Hood (bonnet)", "Dent"), ("Front door", "Scratch")])
-    c = at.session_state["claims"][0]
-    assert c["analysis"] is not None and c["status"] != "New"            # already inspected, before anyone opens the Insurance tab
-    assert [p for p in CALLS if "minor/check" in p] and [p for p in CALLS if "minor/finalize" in p]
-    assert "Success: your claim was submitted" in text(at) and "Declared damage vs model" not in text(at)   # the client sees no findings
-    at.button(key="vtab_insurance").click().run()
-    t = text(at)
-    assert "Declared damage vs model" in t and "Ready to inspect" not in t and "Hood (bonnet)" in t and "Front door" in t
-    n = len(CALLS)
-    at.button(key="vtab_client").click().run(); at.button(key="vtab_insurance").click().run()
-    assert len(CALLS) == n                                              # switching tabs never re-runs the model
-
-
-def test_a_failed_automatic_inspection_is_not_retried_and_can_be_run_by_hand(backend, monkeypatch):
-    import api
-    monkeypatch.setattr(api, "minor_check", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    at = submit_claim(fresh(), "Not towed", [("Hood (bonnet)", "Dent")])
-    at.button(key="vtab_insurance").click().run()
-    assert not at.exception
-    c = at.session_state["claims"][0]
-    assert c["analysis"] is not None and c["status"] == "Needs review" and "boom" in c["analysis"]["rows"][0]["reason"]
-
-
-def test_not_towed_all_matched_is_approved_automatically(backend):
-    at = submit_claim(fresh(), "Not towed", [("Hood (bonnet)", "Dent")])
-    at.button(key="vtab_insurance").click().run()
-    inspect(at)
-    c = at.session_state["claims"][0]
-    assert c["status"] == "Approved" and c["decided_by"] == "Automatic"
-    assert c["analysis"]["outcome"] == "matched"
-
-
-def test_inspection_shows_table_hidden_damage_estimate_and_photo_findings(backend):
-    at = submit_claim(fresh(), "Not towed", [("Hood (bonnet)", "Dent")])
-    at.button(key="vtab_insurance").click().run()
-    inspect(at)
-    t = text(at)
-    for want in ("Declared damage vs model", "Confidence", "Hidden damage assessment", "Low risk", "No hidden damage likely", "Repair estimate", "Photo findings", "Hidden damage likely"):
-        assert want in t, want
-
-
-def test_not_towed_mismatch_waits_for_adjuster_then_can_be_approved_or_rejected(backend):
-    at = submit_claim(fresh(), "Not towed", [("Hood (bonnet)", "Dent"), ("Front door", "Scratch")])
-    at.button(key="vtab_insurance").click().run()
-    assert "Insurance review (1)" in [b.label for b in at.button]
-    inspect(at)
-    c = at.session_state["claims"][0]
-    assert c["status"] == "Needs review" and sorted(r["status"] for r in c["analysis"]["rows"]) == ["matched", "needs_review"]
-    at.button(key="ap_C-001").click().run()
-    c = at.session_state["claims"][0]
-    assert c["status"] == "Approved" and c["decided_by"] == "Adjuster"
-    at.button(key="rr_C-001").click().run()          # re-run goes back through the model
-    assert at.session_state["claims"][0]["status"] == "Needs review"
-    at.button(key="rj_C-001").click().run()
-    assert at.session_state["claims"][0]["status"] == "Rejected"
-
-
-def test_towed_choice_matching_model_is_approved_and_mismatch_is_not(backend):
-    at = submit_claim(fresh(), "Towed", [("Hood (bonnet)", "Replace")])
-    assert at.session_state["claims"][0]["status"] == "Approved"       # inspected on submit
-    at.button(key="cl_new").click().run()
-    submit_claim(at, "Towed", [("Hood (bonnet)", "Repair")])
-    at.button(key="vtab_insurance").click().run()
-    inspect(at, "C-002")
-    c = at.session_state["claims"][1]
-    assert c["status"] == "Needs review" and "model suggests replace" in c["analysis"]["rows"][0]["reason"]
-
-
-def test_demo_mode_inspects_both_claim_types_without_a_backend():
-    at = submit_claim(fresh(), "Not towed", [("Hood", "Dent"), ("Roof", "Scratch")])
-    at.button(key="cl_new").click().run()
-    submit_claim(at, "Towed", [("Hood", "Replace"), ("Roof", "Repair")])
-    at.button(key="vtab_insurance").click().run()
-    inspect(at, "C-001"); inspect(at, "C-002")
-    for c in at.session_state["claims"]:
-        assert c["status"] in ("Approved", "Needs review") and len(c["analysis"]["rows"]) == 2
-
-
-def test_hidden_damage_card_is_always_shown_and_demo_mode_simulates_it():
-    at = submit_claim(fresh(), "Not towed", [("Hood", "Dent")])
-    at.button(key="vtab_insurance").click().run()
-    inspect(at)
-    t = text(at)
-    assert "Hidden damage assessment" in t and "Simulated in demo mode" in t and "Hidden damage likely" in t
-
-
-def test_towed_claims_get_a_hidden_damage_assessment_in_demo_mode():
-    at = submit_claim(fresh(), "Towed", [("Hood", "Replace"), ("Roof", "Repair")])
-    c = at.session_state["claims"][0]
-    assert c["analysis"]["hidden"] is not None and "hidden_flag" in c["analysis"]
-    at.button(key="vtab_insurance").click().run()
-    t = text(at)
-    assert "Hidden damage assessment" in t and "Simulated in demo mode" in t and "Hidden damage likely" in t
-
-
-def test_towed_hidden_damage_is_flagged_not_invented_when_the_backend_cannot_assess_it(backend):
-    at = submit_claim(fresh(), "Towed", [("Hood (bonnet)", "Replace")])
-    c = at.session_state["claims"][0]
-    assert c["analysis"]["hidden"] is None and c["analysis"]["hidden_note"]
-    at.button(key="vtab_insurance").click().run()
-    assert "Not assessed" in text(at) and c["status"] == "Approved"
-
-
-def hero_markdown(at):
-    return [m.value for m in at.markdown if "class='hero sm'" in m.value]
-
-
-def test_status_tiles_and_heroes_on_both_tabs():
-    at = fresh()
-    assert "Choose the damage" in text(at)
-    # a <style> tag in the same element makes the app collapse it to zero height (this once hid the hero)
-    assert len(hero_markdown(at)) == 1 and "<style" not in hero_markdown(at)[0]
-    at.button(key="vtab_insurance").click().run()
-    t = text(at)
-    assert len(hero_markdown(at)) == 1 and "<style" not in hero_markdown(at)[0] and "class='kpi " in t and "Awaiting inspection" in t
-    assert "awaiting inspection</span>" not in hero_markdown(at)[0]      # the hero no longer repeats the counts as chips
-
-
-def test_status_tiles_filter_the_claim_list(backend):
-    at = submit_claim(fresh(), "Not towed", [("Hood (bonnet)", "Dent")])                              # all matched -> Approved
-    at.button(key="cl_new").click().run()
-    submit_claim(at, "Not towed", [("Hood (bonnet)", "Dent"), ("Front door", "Scratch")])             # mismatch -> Needs review
-    at.button(key="vtab_insurance").click().run()
-    assert len(at.expander) >= 2
-    labels = lambda: [x.label for x in at.expander if x.label.startswith("C-")]
-    assert len(labels()) == 2
-    at.button(key="kpibtn_needsreview").click().run()
-    assert not at.exception and labels() == [l for l in labels() if "Needs review" in l] and len(labels()) == 1
-    assert "kpi t-warn sel" in text(at)
-    at.button(key="kpibtn_rejected").click().run()
-    assert labels() == [] and "No claims with this status" in text(at)
-    at.button(key="kpibtn_rejected").click().run()                      # clicking the active tile clears the filter
-    assert len(labels()) == 2 and "sel'" not in text(at)
-
-
-# ---------------- damage examples ----------------
-def test_every_damage_type_has_two_example_photos():
-    for d in L.DAMAGES:
-        for v in (0, 1):
-            assert L.find_example(d, v), (d, v)
-
-
-def test_backend_damage_labels_map_to_local_types():
-    assert L.local_damage("Smashed glass") == "Smashed" and L.local_damage("Broken lamp") == "Broken" and L.local_damage("Dent") == "Dent"
-    assert L.local_damage("") is None and L.local_damage("Hail") is None
-
-
-def test_damage_guide_is_at_the_top_and_examples_show_only_when_opened():
-    at = fresh()
-    at.multiselect(key="cl_dmg").set_value(["Scratch"]).run()
-    assert not at.exception and len(at.get("image")) == 0           # nothing inline until the guide is opened
-    assert at.button(key="cl_guide")
-    at.button(key="cl_guide").click().run()
-    assert not at.exception
-
-
-def test_summary_prefix_is_cleaned_and_claims_are_collapsible(backend):
-    at = submit_claim(fresh(), "Not towed", [("Front door", "Scratch")])
-    at.button(key="vtab_insurance").click().run()
-    claim_boxes = [x for x in at.expander if x.label.startswith("C-")]
-    assert len(claim_boxes) == 1 and claim_boxes[0].proto.expanded
-    inspect(at)
-    assert "human adjuster" not in text(at).lower()
-
-
-def test_minor_item_uses_a_severity_source_the_backend_accepts():
-    import api
-    assert api.minor_item({"severity": {"ok": False}}, 1, "dent")["severity_source"] == "manual"
-    assert api.minor_item({"severity": {"ok": True, "composite": 50}}, 1, "dent")["severity_source"] == "glm"
-
-
-def test_hidden_damage_sees_every_damage_present():
-    one = L.mock_hidden_damage([{"part": "Hood", "damage": "Dent", "severity": 60}])
-    many = L.mock_hidden_damage([{"part": "Hood", "damage": "Dent", "severity": 60},
-                                 {"part": "Roof", "damage": "Scratch", "severity": None},        # declared but could not be graded
-                                 {"part": "Hood", "damage": "Smashed glass", "severity": None}])  # only seen in a photo
-    assert many["probability"] > one["probability"]
-    assert many["damages_considered"] == ["Hood · Dent", "Hood · Smashed", "Roof · Scratch"]
-    assert L.mock_hidden_damage([{"part": "Roof", "damage": "Scratch", "severity": None}]) is None   # nothing graded: cannot tell
-
-
-def test_demo_claim_hidden_damage_lists_all_declared_damages():
-    at = submit_claim(fresh(), "Not towed", [("Hood", "Dent"), ("Roof", "Scratch")])
-    hd = at.session_state["claims"][0]["analysis"]["hidden"]
-    assert {"Hood · Dent", "Roof · Scratch"} <= set(hd["damages_considered"])
-
-
-def test_photo_findings_is_one_image_per_photo_listing_all_its_damages():
-    at = fresh()
-    at.selectbox(key="cl_part").set_value("Hood")
-    at.multiselect(key="cl_dmg").set_value(["Dent", "Scratch", "Torn"]).run(); at.button(key="cl_add").click().run()
-    items = at.session_state["cl"]["items"]["Not towed"]
-    for i in items:
-        i.update(data=scene(7), pseq=1)
-    at.button(key="cl_to_photos").click().run(); at.button(key="cl_submit").click().run()
-    imgs = at.session_state["claims"][0]["analysis"]["images"]
-    assert len(imgs) == 1
-    assert all(d in imgs[0]["caption"] for d in ("Dent", "Scratch", "Torn")) and imgs[0]["note"].count("\n") >= 2
+OPEN = ("New", "Needs review")
+_f = ss.get("status_filter")
+shown = [c for c in claims if not _f or c["status"] == _f]
+if _f:
+    st.caption(f"Showing {len(shown)} {LABEL.get(_f, _f).lower()} claim{'s' if len(shown) != 1 else ''}. Click the tile again to show all.")
+    if not shown:
+        st.markdown("<div class='mc-empty'>No claims with this status.</div>", unsafe_allow_html=True)
+for c in sorted(reversed(shown), key=lambda x: x["status"] not in OPEN):   # claims waiting for action first
+    # every claim can be minimised; the ones waiting for action start open
+    with st.expander(f"{c['id']} · {c['mode']} · {len(c['items'])} item(s) · {LABEL.get(c['status'], c['status'])}", expanded=c["status"] in OPEN or ss.get("just_ran") == c["id"]):
+        render_claim(c)
