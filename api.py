@@ -90,3 +90,10 @@ def minor_item(chk, part_id, damage_type):
 
 def minor_finalize(items):
     return _req("POST", "/journeys/minor/finalize", json={"items": items})
+
+
+# ---- hidden damage (used by towed claims; not-towed claims get theirs from /minor/finalize) ----
+def hidden_assess(items):
+    """POST /hidden-damage/assess. items: [{"part_id": int, "severity": 0-100}].
+    Returns verdict, hidden_damage_likely, claim_risk, zone_name, check_first, hidden_parts, summary, estimate..."""
+    return _req("POST", "/hidden-damage/assess", json={"items": items})
